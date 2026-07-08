@@ -19,6 +19,19 @@ export interface Turn {
   error?: string
 }
 
+export interface Conversation {
+  id: string
+  title: string
+  turns: Turn[]
+  createdAt: number
+  updatedAt: number
+}
+
+export interface SessionsData {
+  activeId: string
+  conversations: Conversation[]
+}
+
 export interface ModelOption {
   id: string
   label: string
