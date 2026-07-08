@@ -1,0 +1,13 @@
+services:
+  googlebanana:
+    build: .
+    container_name: googlebanana
+    restart: unless-stopped
+    ports:
+      # Bind to localhost only; expose via Nginx/Caddy reverse proxy with HTTPS.
+      - "127.0.0.1:8787:8787"
+    environment:
+      NODE_ENV: production
+      PORT: 8787
+      # Image generation can take a while; keep in sync with reverse-proxy read timeout.
+      PROXY_TIMEOUT_MS: 300000
