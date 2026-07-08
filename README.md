@@ -38,6 +38,52 @@ npm run build   # outputs dist/
 npm start       # serves dist/ + /proxy on http://localhost:8787 (set PORT to change)
 ```
 
+### Docker (recommended)
+
+The app is designed for **public hosting with per-user API keys**: each visitor
+pastes their own OpenRouter or Gemini key in Settings (stored in their browser
+only). The server never sees or stores keys.
+
+```bash
+docker compose up -d --build
+```
+
+By default the container listens on `127.0.0.1:8787`. Put Nginx or Caddy in
+front for HTTPS. Set `proxy_read_timeout` (Nginx) or equivalent to at least
+**300s** — image generation can take 20+ seconds.
+
+Health check: `GET /healthz` → `{"ok":true}`.
+
+#### Reverse proxy examples
+
+**Caddy** (`banana.example.com`):
+
+```caddy
+banana.example.com {
+    reverse_proxy 127.0.0.1:8787
+}
+```
+
+**Nginx** (snippet):
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_read_timeout 300s;
+    client_max_body_size 50m;
+}
+```
+
+#### Visitor API configuration
+
+| Provider | API Base URL | Model (examples) |
+| -------- | ------------ | ---------------- |
+| OpenRouter (default) | `https://openrouter.ai/api/v1` | `google/gemini-3-pro-image`, `google/gemini-3.1-flash-image` |
+| Google Gemini (AI Studio) | `https://generativelanguage.googleapis.com/v1beta/openai` | Custom model id from [Google AI Studio](https://aistudio.google.com/) |
+
 ## Scripts
 
 | Script          | Description                                    |
