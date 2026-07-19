@@ -258,12 +258,17 @@ export default function Message({ turn, busy, onRedoWithPro }: Props) {
         )}
 
         {turn.pending && (
-          <div className="flex items-center gap-3 rounded-2xl bg-gray-100 px-4 py-3 dark:bg-gray-800">
-            <span className="relative flex h-4 w-4">
+          <div className="flex items-start gap-3 rounded-2xl bg-gray-100 px-4 py-3 dark:bg-gray-800">
+            <span className="relative mt-0.5 flex h-4 w-4 shrink-0">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-banana-400 opacity-75" />
               <span className="relative inline-flex h-4 w-4 rounded-full bg-banana-500" />
             </span>
-            <span className="text-sm text-gray-500 dark:text-gray-400">{pendingLabel}</span>
+            <div className="min-w-0">
+              <p className="text-sm text-gray-600 dark:text-gray-300">{pendingLabel}</p>
+              <p className="mt-1 text-xs leading-snug text-gray-500 dark:text-gray-400">
+                Switching Banana / ChatGPT keeps this running. Closing the tab cancels it.
+              </p>
+            </div>
           </div>
         )}
 

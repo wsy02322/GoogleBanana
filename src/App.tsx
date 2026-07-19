@@ -436,17 +436,15 @@ export default function App() {
                 onClick={switchAction}
                 className="mt-0.5 text-left text-xs font-medium text-banana-600 underline-offset-2 hover:underline dark:text-banana-400"
                 aria-label={switchLabel}
-                title={
-                  otherBusy
-                    ? `${switchLabel} · generation continues in the other workspace`
-                    : switchLabel
-                }
+                title="Switching workspaces keeps generation running. Closing this tab cancels it."
               >
                 ({switchLabel})
               </button>
-              {otherBusy && (
-                <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-300">
-                  Generation still running in the other workspace — result will appear in that chat.
+              {(busy || otherBusy) && (
+                <p className="mt-0.5 text-[11px] leading-snug text-amber-700 dark:text-amber-300">
+                  {otherBusy
+                    ? 'Generation continues in the other workspace — result saves there. Closing this tab cancels it.'
+                    : 'You can switch workspaces — generation keeps running. Closing this tab cancels it.'}
                 </p>
               )}
             </div>
