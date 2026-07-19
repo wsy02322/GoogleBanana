@@ -85,6 +85,22 @@ export function buildCapabilityReport(input: {
     thinking = input.reasoning ? 'returned' : 'not_returned'
   }
 
+  let searchEvidence: CapabilityReport['searchEvidence']
+  if (input.searchRequested === 'off') {
+    searchEvidence = 'off'
+  } else if (input.searchFallback) {
+    // Fallback is always reported; refine if we still got cites/calls after retry.
+    if (input.citationCount > 0) searchEvidence = 'cited'
+    else if (typeof input.searchCalls === 'number' && input.searchCalls > 0) searchEvidence = 'called'
+    else searchEvidence = 'fallback'
+  } else if (input.citationCount > 0) {
+    searchEvidence = 'cited'
+  } else if (typeof input.searchCalls === 'number' && input.searchCalls > 0) {
+    searchEvidence = 'called'
+  } else {
+    searchEvidence = 'none'
+  }
+
   return {
     mode: input.mode,
     model: input.model,
@@ -92,6 +108,7 @@ export function buildCapabilityReport(input: {
     searchRequested: input.searchRequested,
     searchUsed: input.searchUsed,
     searchFallback: input.searchFallback,
+    searchEvidence,
     citationCount: input.citationCount,
     searchCalls: input.searchCalls,
     imageOk: input.imageOk,

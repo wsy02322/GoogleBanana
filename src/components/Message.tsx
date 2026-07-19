@@ -66,61 +66,66 @@ function CapabilityChips({ report }: { report: CapabilityReport }) {
     })
   }
 
-  if (report.searchRequested === 'off') {
+  // Search evidence ladder — never claim pixel-level influence.
+  const pixelCaveat =
+    'Cannot verify from the API that search results changed the image pixels.'
+
+  if (report.searchEvidence === 'off') {
     chips.push({
       key: 'search',
       label: 'Search off',
       tone: 'muted',
       title: 'No search grounding requested',
     })
-  } else if (report.searchFallback) {
+  } else if (report.searchFallback && report.searchEvidence === 'fallback') {
     chips.push({
       key: 'search',
-      label: 'Image search → Web',
+      label: 'Image search rejected',
       tone: 'warn',
-      title:
-        'Web + Image Search was requested, but the native image-search tool was rejected. Fell back to web search.',
+      title: `Web + Image Search tool was rejected; fell back to web, but still no search calls or citations. ${pixelCaveat}`,
     })
-  } else if (report.searchUsed === 'web-image') {
+  } else if (report.searchEvidence === 'none') {
     chips.push({
       key: 'search',
-      label:
-        report.citationCount > 0
-          ? `Web+Image ✓ · ${report.citationCount}`
-          : 'Web+Image · no cites',
-      tone: report.citationCount > 0 ? 'ok' : 'warn',
-      title:
-        report.citationCount > 0
-          ? `${report.citationCount} citation(s) returned`
-          : 'Web + Image Search was enabled, but no url_citation annotations came back',
+      label: 'Search · no proof',
+      tone: 'warn',
+      title: `Search was enabled, but no search calls and no citations were reported — results were probably not used. ${pixelCaveat}`,
+    })
+  } else if (report.searchEvidence === 'called') {
+    chips.push({
+      key: 'search',
+      label: report.searchFallback
+        ? `Image→Web · called · no cites${typeof report.searchCalls === 'number' ? ` · ${report.searchCalls}` : ''}`
+        : `Search called · no cites${typeof report.searchCalls === 'number' ? ` · ${report.searchCalls}` : ''}`,
+      tone: 'warn',
+      title: `Upstream reported ${report.searchCalls ?? '?'} search call(s), but no url_citation annotations — we know search ran, not that results entered the reply or image. ${pixelCaveat}`,
     })
   } else {
-    // web
-    const calls =
-      typeof report.searchCalls === 'number' ? ` · ${report.searchCalls} call${report.searchCalls === 1 ? '' : 's'}` : ''
-    if (report.citationCount > 0) {
-      chips.push({
-        key: 'search',
-        label: `Web ✓ · ${report.citationCount}${calls}`,
-        tone: 'ok',
-        title: `${report.citationCount} citation(s)${typeof report.searchCalls === 'number' ? `, ${report.searchCalls} search call(s)` : ''}`,
-      })
-    } else if (typeof report.searchCalls === 'number' && report.searchCalls > 0) {
-      chips.push({
-        key: 'search',
-        label: `Web used · no cites${calls}`,
-        tone: 'warn',
-        title: `Model made ${report.searchCalls} search call(s), but no url_citation annotations were returned`,
-      })
-    } else {
-      chips.push({
-        key: 'search',
-        label: 'Web · no evidence',
-        tone: 'warn',
-        title:
-          'Web search was enabled, but neither citations nor search-call usage were reported. The model may have skipped searching.',
-      })
-    }
+    // cited — strongest verifiable signal
+    chips.push({
+      key: 'search',
+      label: report.searchFallback
+        ? `Image→Web · cited · ${report.citationCount}`
+        : `Cited in reply · ${report.citationCount}`,
+      tone: 'ok',
+      title: `${report.citationCount} citation(s) in the response — strongest API proof that search results entered the model output. ${pixelCaveat}`,
+    })
+  }
+
+  // Explicit second chip when search was on: pixel influence is never verified.
+  if (report.searchRequested !== 'off') {
+    chips.push({
+      key: 'pixels',
+      label:
+        report.searchEvidence === 'cited'
+          ? 'Pixels · unverified'
+          : 'Pixels · not grounded',
+      tone: report.searchEvidence === 'cited' ? 'info' : 'muted',
+      title:
+        report.searchEvidence === 'cited'
+          ? 'Citations prove search entered the reply. Whether those facts affected the generated image cannot be verified from the API.'
+          : 'No strong grounding evidence in the response, so search likely did not meaningfully condition the image.',
+    })
   }
 
   return (

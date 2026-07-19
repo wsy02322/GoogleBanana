@@ -38,6 +38,9 @@ export interface Citation {
 /**
  * Compact per-turn report so users can see whether intelligence features
  * actually engaged (vs requested but silent / fell back).
+ *
+ * Search evidence is intentionally graded — we can prove citations entered the
+ * *response*, but the API does not expose whether those results changed pixels.
  */
 export interface CapabilityReport {
   mode: BananaMode
@@ -50,6 +53,15 @@ export interface CapabilityReport {
   searchUsed: SearchGrounding
   /** True when Web+Image was requested but only Web could be used */
   searchFallback?: boolean
+  /**
+   * Strongest verifiable search evidence from the API response:
+   * - off: not requested
+   * - fallback: native image-search tool rejected; retried as web
+   * - none: requested, but no search calls and no citations
+   * - called: upstream reported search tool calls, but no citations
+   * - cited: url_citation annotations present (results entered the reply)
+   */
+  searchEvidence: 'off' | 'fallback' | 'none' | 'called' | 'cited'
   /** Number of url_citation annotations returned */
   citationCount: number
   /** Upstream web_search_requests if reported in usage */
