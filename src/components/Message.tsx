@@ -234,9 +234,13 @@ export default function Message({ turn, busy, onRedoWithPro }: Props) {
   const pendingLabel =
     turn.searchGrounding && turn.searchGrounding !== 'off'
       ? 'Searching & generating…'
-      : turn.bananaMode === 'thinking' || turn.bananaMode === 'pro'
-        ? 'Thinking & generating…'
-        : 'Generating image…'
+      : turn.gptMode === 'pro-thinking'
+        ? 'Pro Thinking can take several minutes…'
+        : turn.gptMode === 'direct'
+          ? 'Generating with gpt-image-2…'
+          : turn.bananaMode === 'thinking' || turn.bananaMode === 'pro'
+            ? 'Thinking & generating…'
+            : 'Generating image…'
 
   return (
     <div className={`flex w-full animate-fade-in ${isUser ? 'justify-end' : 'justify-start'}`}>

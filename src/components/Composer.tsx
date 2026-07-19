@@ -34,7 +34,7 @@ const GPT_MODES: { id: GptImageMode; label: string; hint: string }[] = [
   {
     id: 'pro-thinking',
     label: 'Pro Thinking',
-    hint: 'gpt-5.4-image-2 · reasoning high',
+    hint: 'gpt-5.4-image-2 · reasoning high · often 2–5+ min',
   },
   {
     id: 'direct',

@@ -9,5 +9,5 @@ services:
     environment:
       NODE_ENV: production
       PORT: 8787
-      # Image generation can take a while; keep in sync with reverse-proxy read timeout.
-      PROXY_TIMEOUT_MS: 300000
+      # Image generation (esp. GPT Pro Thinking) can take several minutes.
+      PROXY_TIMEOUT_MS: 600000

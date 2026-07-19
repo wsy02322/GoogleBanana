@@ -21,6 +21,7 @@ import {
 import {
   generateImage,
   generateGptImage,
+  generationAbortSignal,
   gptModeLabel,
   gptModeModelId,
   bananaModeLabel,
@@ -168,12 +169,17 @@ export default function App() {
     mode: BananaMode,
     search: SearchGrounding,
   ) => {
-    const result = await generateImage(settings, history, {
-      aspectRatio,
-      imageSize,
-      bananaMode: mode,
-      searchGrounding: search,
-    })
+    const result = await generateImage(
+      settings,
+      history,
+      {
+        aspectRatio,
+        imageSize,
+        bananaMode: mode,
+        searchGrounding: search,
+      },
+      generationAbortSignal(),
+    )
     updateActiveTurns((prev) =>
       prev.map((t) =>
         t.id === assistantId
@@ -205,6 +211,7 @@ export default function App() {
       pending: true,
       bananaMode: workspace === 'banana' ? bananaMode : undefined,
       searchGrounding: workspace === 'banana' ? searchGrounding : undefined,
+      gptMode: workspace === 'gpt' ? gptMode : undefined,
     }
     const history = [...turns, userTurn]
     updateActiveTurns([...history, assistantTurn])
@@ -212,15 +219,27 @@ export default function App() {
 
     try {
       if (workspace === 'gpt') {
-        const result = await generateGptImage(settings, history, {
-          aspectRatio,
-          imageSize,
-          mode: gptMode,
-        })
+        const result = await generateGptImage(
+          settings,
+          history,
+          {
+            aspectRatio,
+            imageSize,
+            mode: gptMode,
+          },
+          generationAbortSignal(),
+        )
         updateActiveTurns((prev) =>
           prev.map((t) =>
             t.id === assistantTurn.id
-              ? { ...t, pending: false, text: result.text, images: result.images }
+              ? {
+                  ...t,
+                  pending: false,
+                  text: result.text,
+                  images: result.images,
+                  reasoning: result.reasoning,
+                  gptMode,
+                }
               : t,
           ),
         )
@@ -228,7 +247,11 @@ export default function App() {
         await runBananaGenerate(history, assistantTurn.id, bananaMode, searchGrounding)
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const raw = err instanceof Error ? err.message : String(err)
+      const message =
+        err instanceof Error && err.name === 'TimeoutError'
+          ? 'Request timed out after 10 minutes. Try Direct mode, or lower size to 1K.'
+          : raw
       updateActiveTurns((prev) =>
         prev.map((t) => (t.id === assistantTurn.id ? { ...t, pending: false, error: message } : t)),
       )
