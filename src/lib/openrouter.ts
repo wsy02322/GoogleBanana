@@ -164,6 +164,9 @@ async function parseProxyResponse(res: Response): Promise<unknown> {
     throw new Error(msg)
   }
 
+  const proxiedError = (data as { error?: { message?: string } })?.error?.message
+  if (proxiedError) throw new Error(proxiedError)
+
   return data
 }
 
