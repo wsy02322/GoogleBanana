@@ -147,7 +147,7 @@ export default function Composer({
                   onClick={() => onChangeBananaMode(m.id)}
                   title={
                     unavailable
-                      ? 'Pro 不支持 Image Search；请用 Fast/Thinking，或改回 Web'
+                      ? 'Pro does not support Image Search; use Fast/Thinking, or switch back to Web'
                       : bananaModeHint(m.id)
                   }
                   className={`${pillClass(active)} ${

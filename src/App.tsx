@@ -79,7 +79,7 @@ export default function App() {
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1')
   const [imageSize, setImageSize] = useState<ImageSize>('1K')
   const [modeNotice, setModeNotice] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [busyByWorkspace, setBusyByWorkspace] = useState<Partial<Record<Workspace, boolean>>>({})
   const scrollRef = useRef<HTMLDivElement>(null)
   const modeNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -96,6 +96,13 @@ export default function App() {
   }, [])
 
   const sessions = workspaceSessions[workspace]
+  const busy = Boolean(busyByWorkspace[workspace])
+  const otherBusy =
+    workspace === 'banana' ? Boolean(busyByWorkspace.gpt) : Boolean(busyByWorkspace.banana)
+
+  const setWorkspaceBusy = (ws: Workspace, next: boolean) => {
+    setBusyByWorkspace((prev) => ({ ...prev, [ws]: next }))
+  }
 
   const activeConversation = useMemo(() => {
     return (
@@ -129,12 +136,15 @@ export default function App() {
     })
   }
 
-  const updateActiveTurns = (updater: Turn[] | ((prev: Turn[]) => Turn[])) => {
-    if (!activeConversation) return
-    updateWorkspaceBucket(workspace, (prev) => ({
+  const updateConversationTurns = (
+    ws: Workspace,
+    conversationId: string,
+    updater: Turn[] | ((prev: Turn[]) => Turn[]),
+  ) => {
+    updateWorkspaceBucket(ws, (prev) => ({
       ...prev,
       conversations: prev.conversations.map((c) => {
-        if (c.id !== prev.activeId) return c
+        if (c.id !== conversationId) return c
         const nextTurns = typeof updater === 'function' ? updater(c.turns) : updater
         const title = c.title === 'New chat' ? conversationTitle(nextTurns) : c.title
         return { ...c, turns: nextTurns, title, updatedAt: Date.now() }
@@ -182,13 +192,11 @@ export default function App() {
   }
 
   const enterGptWorkspace = () => {
-    if (busy) return
     setWorkspace('gpt')
     setImageSize((prev) => (prev === '1K' ? '2K' : prev))
   }
 
   const leaveGptWorkspace = () => {
-    if (busy) return
     setWorkspace('banana')
   }
 
@@ -199,7 +207,7 @@ export default function App() {
     if (mode === 'pro' && searchGrounding === 'web-image') {
       setSearchGrounding('web')
       showModeNotice(
-        'Pro 不支持 Image Search。已自动改为 Web 搜索。需要“Web + Image”请用 Fast/Thinking（Nano Banana 2）。',
+        'Pro does not support Image Search. Switched to Web search. Use Fast/Thinking (Nano Banana 2) for Web + Image.',
       )
     }
   }
@@ -209,12 +217,14 @@ export default function App() {
     if (search === 'web-image' && bananaMode === 'pro') {
       setBananaMode('thinking')
       showModeNotice(
-        'Web + Image Search 仅支持 Nano Banana 2。已自动从 Pro 切换到 Thinking。Pro 仍可用 Web 搜索。',
+        'Web + Image Search requires Nano Banana 2. Switched from Pro to Thinking. Pro still works with Web search.',
       )
     }
   }
 
   const runBananaGenerate = async (
+    ws: Workspace,
+    conversationId: string,
     history: Turn[],
     assistantId: string,
     mode: BananaMode,
@@ -231,7 +241,7 @@ export default function App() {
       },
       generationAbortSignal(),
     )
-    updateActiveTurns((prev) =>
+    updateConversationTurns(ws, conversationId, (prev) =>
       prev.map((t) =>
         t.id === assistantId
           ? {
@@ -252,6 +262,8 @@ export default function App() {
 
   const send = async (text: string, images: string[]) => {
     if (busy || !activeConversation) return
+    const jobWorkspace = workspace
+    const jobConversationId = activeConversation.id
     const userTurn: Turn = { id: uid(), role: 'user', text, images, createdAt: Date.now() }
     const assistantTurn: Turn = {
       id: uid(),
@@ -260,16 +272,16 @@ export default function App() {
       images: [],
       createdAt: Date.now(),
       pending: true,
-      bananaMode: workspace === 'banana' ? bananaMode : undefined,
-      searchGrounding: workspace === 'banana' ? searchGrounding : undefined,
-      gptMode: workspace === 'gpt' ? gptMode : undefined,
+      bananaMode: jobWorkspace === 'banana' ? bananaMode : undefined,
+      searchGrounding: jobWorkspace === 'banana' ? searchGrounding : undefined,
+      gptMode: jobWorkspace === 'gpt' ? gptMode : undefined,
     }
     const history = [...turns, userTurn]
-    updateActiveTurns([...history, assistantTurn])
-    setBusy(true)
+    updateConversationTurns(jobWorkspace, jobConversationId, [...history, assistantTurn])
+    setWorkspaceBusy(jobWorkspace, true)
 
     try {
-      if (workspace === 'gpt') {
+      if (jobWorkspace === 'gpt') {
         const result = await generateGptImage(
           settings,
           history,
@@ -280,7 +292,7 @@ export default function App() {
           },
           generationAbortSignal(),
         )
-        updateActiveTurns((prev) =>
+        updateConversationTurns(jobWorkspace, jobConversationId, (prev) =>
           prev.map((t) =>
             t.id === assistantTurn.id
               ? {
@@ -295,7 +307,14 @@ export default function App() {
           ),
         )
       } else {
-        await runBananaGenerate(history, assistantTurn.id, bananaMode, searchGrounding)
+        await runBananaGenerate(
+          jobWorkspace,
+          jobConversationId,
+          history,
+          assistantTurn.id,
+          bananaMode,
+          searchGrounding,
+        )
       }
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err)
@@ -305,18 +324,20 @@ export default function App() {
           : raw
       if (raw === 'Failed to fetch' || (err instanceof TypeError && /fetch/i.test(raw))) {
         message =
-          'Connection lost while waiting for the image (common on mobile after ~2 minutes). Update to the latest server build, stay on this page, or retry on Wi‑Fi.'
+          'Connection lost while waiting for the image. Keep this browser tab open until the image finishes, or retry on a more stable network.'
       }
-      updateActiveTurns((prev) =>
+      updateConversationTurns(jobWorkspace, jobConversationId, (prev) =>
         prev.map((t) => (t.id === assistantTurn.id ? { ...t, pending: false, error: message } : t)),
       )
     } finally {
-      setBusy(false)
+      setWorkspaceBusy(jobWorkspace, false)
     }
   }
 
   const redoWithPro = async (assistantTurn: Turn) => {
     if (busy || workspace !== 'banana' || !activeConversation) return
+    const jobWorkspace = workspace
+    const jobConversationId = activeConversation.id
     const idx = turns.findIndex((t) => t.id === assistantTurn.id)
     if (idx <= 0) return
     const history = turns.slice(0, idx).filter((t) => !t.error && !t.pending)
@@ -331,12 +352,14 @@ export default function App() {
       bananaMode: 'pro',
       searchGrounding: assistantTurn.searchGrounding ?? searchGrounding,
     }
-    updateActiveTurns([...turns, redoTurn])
-    setBusy(true)
+    updateConversationTurns(jobWorkspace, jobConversationId, [...turns, redoTurn])
+    setWorkspaceBusy(jobWorkspace, true)
     setBananaMode('pro')
 
     try {
       await runBananaGenerate(
+        jobWorkspace,
+        jobConversationId,
         history,
         redoTurn.id,
         'pro',
@@ -344,11 +367,11 @@ export default function App() {
       )
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      updateActiveTurns((prev) =>
+      updateConversationTurns(jobWorkspace, jobConversationId, (prev) =>
         prev.map((t) => (t.id === redoTurn.id ? { ...t, pending: false, error: message } : t)),
       )
     } finally {
-      setBusy(false)
+      setWorkspaceBusy(jobWorkspace, false)
     }
   }
 
@@ -411,13 +434,21 @@ export default function App() {
               <button
                 type="button"
                 onClick={switchAction}
-                disabled={busy}
-                className="mt-0.5 text-left text-xs font-medium text-banana-600 underline-offset-2 hover:underline disabled:opacity-50 dark:text-banana-400"
+                className="mt-0.5 text-left text-xs font-medium text-banana-600 underline-offset-2 hover:underline dark:text-banana-400"
                 aria-label={switchLabel}
-                title={switchLabel}
+                title={
+                  otherBusy
+                    ? `${switchLabel} · generation continues in the other workspace`
+                    : switchLabel
+                }
               >
                 ({switchLabel})
               </button>
+              {otherBusy && (
+                <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-300">
+                  Generation still running in the other workspace — result will appear in that chat.
+                </p>
+              )}
             </div>
           </div>
 
