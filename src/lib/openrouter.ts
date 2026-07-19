@@ -1,11 +1,8 @@
 import type {
   AspectRatio,
   BananaMode,
-  CapabilityReport,
-  Citation,
   GptImageMode,
   ImageSize,
-  SearchGrounding,
   Settings,
   Turn,
 } from './types'
@@ -25,20 +22,14 @@ export interface GenerateOptions {
   aspectRatio: AspectRatio
   imageSize: ImageSize
   bananaMode?: BananaMode
-  searchGrounding?: SearchGrounding
 }
 
 export interface GenerateResult {
   text: string
   images: string[]
   reasoning?: string
-  citations?: Citation[]
   modelUsed?: string
   bananaMode?: BananaMode
-  searchGrounding?: SearchGrounding
-  capability?: CapabilityReport
-  /** Internal: search calls reported by OpenRouter usage */
-  searchCalls?: number
 }
 
 export const GPT_PRO_THINKING_MODEL = 'openai/gpt-5.4-image-2'
@@ -65,54 +56,6 @@ export function bananaModeHint(mode: BananaMode): string {
 
 function bananaReasoningEffort(mode: BananaMode): 'minimal' | 'high' {
   return mode === 'fast' ? 'minimal' : 'high'
-}
-
-export function buildCapabilityReport(input: {
-  mode: BananaMode
-  model: string
-  searchRequested: SearchGrounding
-  searchUsed: SearchGrounding
-  searchFallback?: boolean
-  reasoning?: string
-  citationCount: number
-  searchCalls?: number
-  imageOk: boolean
-}): CapabilityReport {
-  let thinking: CapabilityReport['thinking']
-  if (input.mode === 'fast') {
-    thinking = input.reasoning ? 'returned' : 'minimal'
-  } else {
-    thinking = input.reasoning ? 'returned' : 'not_returned'
-  }
-
-  let searchEvidence: CapabilityReport['searchEvidence']
-  if (input.searchRequested === 'off') {
-    searchEvidence = 'off'
-  } else if (input.searchFallback) {
-    // Fallback is always reported; refine if we still got cites/calls after retry.
-    if (input.citationCount > 0) searchEvidence = 'cited'
-    else if (typeof input.searchCalls === 'number' && input.searchCalls > 0) searchEvidence = 'called'
-    else searchEvidence = 'fallback'
-  } else if (input.citationCount > 0) {
-    searchEvidence = 'cited'
-  } else if (typeof input.searchCalls === 'number' && input.searchCalls > 0) {
-    searchEvidence = 'called'
-  } else {
-    searchEvidence = 'none'
-  }
-
-  return {
-    mode: input.mode,
-    model: input.model,
-    thinking,
-    searchRequested: input.searchRequested,
-    searchUsed: input.searchUsed,
-    searchFallback: input.searchFallback,
-    searchEvidence,
-    citationCount: input.citationCount,
-    searchCalls: input.searchCalls,
-    imageOk: input.imageOk,
-  }
 }
 
 function turnToMessage(turn: Turn): ChatMessage {
@@ -191,24 +134,6 @@ export function generationAbortSignal(timeoutMs = 600_000): AbortSignal {
   return AbortSignal.timeout(timeoutMs)
 }
 
-function extractCitations(message: {
-  annotations?: Array<{
-    type?: string
-    url_citation?: { url?: string; title?: string; content?: string }
-  }>
-}): Citation[] {
-  const citations: Citation[] = []
-  for (const ann of message.annotations ?? []) {
-    if (ann?.type !== 'url_citation' || !ann.url_citation?.url) continue
-    citations.push({
-      url: ann.url_citation.url,
-      title: ann.url_citation.title || ann.url_citation.url,
-      content: ann.url_citation.content,
-    })
-  }
-  return citations
-}
-
 function imagesFromChatCompletion(data: unknown): GenerateResult {
   const payload = data as {
     choices?: Array<{
@@ -217,15 +142,8 @@ function imagesFromChatCompletion(data: unknown): GenerateResult {
         images?: Array<{ image_url?: { url?: string } }>
         reasoning?: string
         reasoning_details?: unknown
-        annotations?: Array<{
-          type?: string
-          url_citation?: { url?: string; title?: string; content?: string }
-        }>
       }
     }>
-    usage?: {
-      server_tool_use?: { web_search_requests?: number }
-    }
   }
 
   const choice = payload?.choices?.[0]
@@ -258,9 +176,6 @@ function imagesFromChatCompletion(data: unknown): GenerateResult {
       ? message.reasoning.trim()
       : undefined
 
-  const citations = message ? extractCitations(message) : []
-  const searchCalls = payload?.usage?.server_tool_use?.web_search_requests
-
   // Last resort: some providers embed data-URL images inside markdown/text.
   if (images.length === 0 && text) {
     const embedded = text.match(/data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=\s]+/g)
@@ -284,8 +199,6 @@ function imagesFromChatCompletion(data: unknown): GenerateResult {
     text,
     images,
     reasoning,
-    citations: citations.length > 0 ? citations : undefined,
-    searchCalls: typeof searchCalls === 'number' ? searchCalls : undefined,
   }
 }
 
@@ -339,104 +252,32 @@ function latestUserReferences(history: Turn[]): Array<{ type: 'image_url'; image
   return []
 }
 
-function buildBananaSearchPlugins(
-  search: SearchGrounding,
-  engine: 'native' | 'exa' = 'native',
-): unknown[] | undefined {
-  if (search === 'off') return undefined
-
-  // OpenRouter Gemini *image* endpoints do not advertise tool-calling, so
-  // `tools: [{ type: "openrouter:web_search" }]` / `google_search` returns:
-  // "No endpoints found that support tool use".
-  // Use the web plugin instead — it injects search results into the prompt
-  // without requiring a tool-capable endpoint.
-  //
-  // Native Google Image Search grounding is not exposed on these OpenRouter
-  // image endpoints; Web + Image therefore uses a richer web plugin prompt.
-  const today = new Date().toISOString().slice(0, 10)
-  const search_prompt =
-    search === 'web-image'
-      ? `A web search was conducted on ${today}. Use these results as factual and visual references before generating the image. Prefer official/current pages for "today/current/latest" requests. Cite sources with markdown links named by domain.`
-      : `A web search was conducted on ${today}. Incorporate the following web search results into your response and image. Cite them using markdown links named using the domain of the source.`
-
-  return [
-    {
-      id: 'web',
-      engine,
-      max_results: search === 'web-image' ? 8 : 5,
-      search_prompt,
-    },
-  ]
-}
-
-function withSearchHint(
-  messages: ChatMessage[],
-  search: SearchGrounding,
-  evidenceRetry: boolean,
-): ChatMessage[] {
-  if (search === 'off' || messages.length === 0) return messages
-
-  const requirement =
-    search === 'web-image'
-      ? 'Web search results are provided below/with this request. You MUST ground the image in those current results and cite sources. Do not invent dates, sources, or current events from memory.'
-      : 'Web search results are provided below/with this request. You MUST ground current facts in those results and cite sources. Do not invent dates, sources, or current events from memory.'
-  const retry =
-    evidenceRetry
-      ? ' This is a required retry because the previous result contained no verifiable sources. Cite at least one search result.'
-      : ''
-  const hint = `${requirement}${retry}`
-
-  const last = messages[messages.length - 1]
-  if (last.role !== 'user') return messages
-
-  const content: ContentPart[] = [{ type: 'text', text: hint }, ...last.content]
-  return [...messages.slice(0, -1), { ...last, content }]
-}
-
 export async function generateImage(
   settings: Settings,
   history: Turn[],
   opts: GenerateOptions,
   signal?: AbortSignal,
 ): Promise<GenerateResult> {
-  return generateBananaImage(settings, history, opts, signal, {
-    searchRequested: opts.searchGrounding ?? 'off',
-    searchFallback: false,
-    evidenceRetry: false,
-  })
+  return generateBananaImage(settings, history, opts, signal)
 }
 
 async function generateBananaImage(
   settings: Settings,
   history: Turn[],
   opts: GenerateOptions,
-  signal: AbortSignal | undefined,
-  meta: {
-    searchRequested: SearchGrounding
-    searchFallback: boolean
-    evidenceRetry: boolean
-    searchEngine?: 'native' | 'exa'
-  },
+  signal?: AbortSignal,
 ): Promise<GenerateResult> {
   if (!settings.apiKey.trim()) {
     throw new Error('No API key set. Open Settings and paste your OpenRouter API key.')
   }
 
-  const searchGrounding: SearchGrounding = opts.searchGrounding ?? 'off'
-  // Image Search is a Nano Banana 2 capability on Google's API. On OpenRouter
-  // we still route Web + Image to NB2 and use the web plugin (see below).
-  const requestedMode: BananaMode = opts.bananaMode ?? 'thinking'
-  const bananaMode: BananaMode =
-    searchGrounding === 'web-image' && requestedMode === 'pro' ? 'thinking' : requestedMode
+  const bananaMode: BananaMode = opts.bananaMode ?? 'thinking'
   const model = bananaModeModelId(bananaMode)
   const effort = bananaReasoningEffort(bananaMode)
-  const searchEngine = meta.searchEngine ?? 'native'
-  const plugins = buildBananaSearchPlugins(searchGrounding, searchEngine)
-  const messages = withSearchHint(buildMessages(history), searchGrounding, meta.evidenceRetry)
 
   const body: Record<string, unknown> = {
     model,
-    messages,
+    messages: buildMessages(history),
     modalities: ['image', 'text'],
     stream: false,
     reasoning: { effort, exclude: false },
@@ -446,7 +287,6 @@ async function generateBananaImage(
       image_size: opts.imageSize,
     },
   }
-  if (plugins) body.plugins = plugins
 
   const res = await fetch('/proxy', {
     method: 'POST',
@@ -455,62 +295,13 @@ async function generateBananaImage(
     signal,
   })
 
-  // Native Google search may be unavailable for some image endpoints — fall back to Exa.
-  if (!res.ok && searchGrounding !== 'off' && searchEngine === 'native') {
-    const raw = await res.text()
-    let msg = `Request failed with HTTP ${res.status}`
-    try {
-      const parsed = raw ? JSON.parse(raw) : {}
-      msg = (parsed as { error?: { message?: string } })?.error?.message || msg
-    } catch {
-      if (raw) msg = raw.slice(0, 300)
-    }
-    const looksLikeSearchRouteError =
-      /tool use|plugin|web search|native|endpoint|grounding|unsupported/i.test(msg)
-    if (looksLikeSearchRouteError) {
-      return generateBananaImage(settings, history, opts, signal, {
-        ...meta,
-        searchFallback: true,
-        searchEngine: 'exa',
-      })
-    }
-    throw new Error(msg)
-  }
-
   const data = await parseProxyResponse(res)
   const result = imagesFromChatCompletion(data)
-  const citationCount = result.citations?.length ?? 0
-  const hasSearchEvidence =
-    citationCount > 0 || (typeof result.searchCalls === 'number' && result.searchCalls > 0)
-
-  if (meta.searchRequested !== 'off' && !hasSearchEvidence) {
-    if (!meta.evidenceRetry) {
-      return generateBananaImage(settings, history, opts, signal, {
-        ...meta,
-        evidenceRetry: true,
-      })
-    }
-    throw new Error(
-      'Search was required, but the response had no cited sources after two attempts. The ungrounded image was discarded. Try again, attach a reference image, or turn search off.',
-    )
-  }
 
   return {
     ...result,
     modelUsed: model,
     bananaMode,
-    searchGrounding,
-    capability: buildCapabilityReport({
-      mode: bananaMode,
-      model,
-      searchRequested: meta.searchRequested,
-      searchUsed: searchGrounding,
-      searchFallback: meta.searchFallback || undefined,
-      reasoning: result.reasoning,
-      citationCount,
-      searchCalls: result.searchCalls,
-      imageOk: result.images.length > 0,
-    }),
   }
 }
 

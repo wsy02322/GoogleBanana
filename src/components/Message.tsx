@@ -1,223 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
-import type { CapabilityReport, Turn } from '../lib/types'
-import { bananaModeHint, bananaModeLabel } from '../lib/openrouter'
+import { useState } from 'react'
+import type { Turn } from '../lib/types'
+import { bananaModeLabel } from '../lib/openrouter'
 import { downloadDataUrl } from '../lib/image'
-import { DownloadIcon, RefreshIcon, ChevronIcon, InfoIcon } from './icons'
+import { DownloadIcon, RefreshIcon, ChevronIcon } from './icons'
 
 interface Props {
   turn: Turn
   busy?: boolean
   onRedoWithPro?: (turn: Turn) => void
-}
-
-type ChipTone = 'ok' | 'warn' | 'muted' | 'info'
-
-interface StatusChip {
-  key: string
-  label: string
-  tone: ChipTone
-  /** Short headline inside the info popover */
-  infoTitle: string
-  /** Plain-language explanation for ordinary users */
-  infoBody: string
-}
-
-function chipClass(tone: ChipTone): string {
-  if (tone === 'ok') {
-    return 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
-  }
-  if (tone === 'warn') {
-    return 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300'
-  }
-  if (tone === 'info') {
-    return 'border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300'
-  }
-  return 'border-gray-200 bg-gray-50 text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400'
-}
-
-function buildStatusChips(report: CapabilityReport): StatusChip[] {
-  const chips: StatusChip[] = []
-
-  chips.push(
-    report.imageOk
-      ? {
-          key: 'image',
-          label: 'Image generated successfully',
-          tone: 'ok',
-          infoTitle: 'Image generated',
-          infoBody: 'This request returned an image. You can view or download it.',
-        }
-      : {
-          key: 'image',
-          label: 'No image was returned',
-          tone: 'warn',
-          infoTitle: 'No image received',
-          infoBody:
-            'The model did not return an image. Try another prompt, or switch Fast / Thinking / Pro and retry.',
-        },
-  )
-
-  chips.push({
-    key: 'mode',
-    label: `${bananaModeLabel(report.mode)} mode`,
-    tone: 'info',
-    infoTitle: `Mode: ${bananaModeLabel(report.mode)}`,
-    infoBody: `${bananaModeHint(report.mode)}. Model: ${report.model}`,
-  })
-
-  if (report.thinking === 'returned') {
-    chips.push({
-      key: 'think',
-      label: 'Thinking process is visible',
-      tone: 'ok',
-      infoTitle: 'Thinking text returned',
-      infoBody:
-        'The model included its thinking in the reply. Open “Thinking process” below to read it.',
-    })
-  } else if (report.thinking === 'not_returned') {
-    chips.push({
-      key: 'think',
-      label: 'Thinking was requested but not shown',
-      tone: 'warn',
-      infoTitle: 'No thinking text',
-      infoBody:
-        'Deeper thinking was requested, but no thinking text came back. The model may still have thought behind the scenes.',
-    })
-  } else {
-    chips.push({
-      key: 'think',
-      label: 'Using light thinking for speed',
-      tone: 'muted',
-      infoTitle: 'Fast mode',
-      infoBody:
-        'Fast mode uses light thinking for speed, so a detailed thinking trace usually is not shown.',
-    })
-  }
-
-  if (report.searchEvidence === 'off') {
-    chips.push({
-      key: 'search',
-      label: 'Web search was turned off',
-      tone: 'muted',
-      infoTitle: 'Search was not used',
-      infoBody:
-        'Web search was off for this image. It was generated from the model’s existing knowledge only.',
-    })
-  } else if (report.searchEvidence === 'cited') {
-    chips.push({
-      key: 'search',
-      label: report.searchFallback
-        ? `Search used via web fallback · ${report.citationCount} source${report.citationCount === 1 ? '' : 's'}`
-        : `Search results used in reply · ${report.citationCount} source${report.citationCount === 1 ? '' : 's'}`,
-      tone: 'ok',
-      infoTitle: 'Search results appear in the reply',
-      infoBody: report.searchFallback
-        ? `Image search was unavailable, so web search was used instead. ${report.citationCount} source(s) are listed in the reply — the strongest sign search entered the text output. We still cannot prove those facts changed the final image.`
-        : `${report.citationCount} source(s) are listed in the reply — the strongest sign search entered the model output. We still cannot prove those facts changed the final image.`,
-    })
-  } else if (report.searchEvidence === 'called') {
-    chips.push({
-      key: 'search',
-      label:
-        typeof report.searchCalls === 'number'
-          ? `Search ran ${report.searchCalls} time${report.searchCalls === 1 ? '' : 's'}, but no sources listed`
-          : 'Search ran, but no sources were listed',
-      tone: 'warn',
-      infoTitle: 'Search ran, use unclear',
-      infoBody: `Search was called${typeof report.searchCalls === 'number' ? ` ${report.searchCalls} time(s)` : ''}, but no sources were listed. We know a search happened, not whether results shaped the reply or the image.`,
-    })
-  } else if (report.searchEvidence === 'fallback') {
-    chips.push({
-      key: 'search',
-      label: 'Image search failed; fell back to web with no sources',
-      tone: 'warn',
-      infoTitle: 'Image search unavailable',
-      infoBody:
-        'You chose Web + Image Search, but image search was unavailable. We fell back to web search and still saw no clear sources. The image likely did not use live search.',
-    })
-  } else {
-    chips.push({
-      key: 'search',
-      label: 'Search was on, but nothing shows it was used',
-      tone: 'warn',
-      infoTitle: 'No search evidence',
-      infoBody:
-        'Search was on, but there were no search calls and no sources. The model probably skipped search, and the image was mostly from existing knowledge.',
-    })
-  }
-
-  return chips
-}
-
-function CapabilityChips({ report }: { report: CapabilityReport }) {
-  const chips = buildStatusChips(report)
-  const [openKey, setOpenKey] = useState<string | null>(null)
-  const rootRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!openKey) return
-    const onPointerDown = (e: PointerEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpenKey(null)
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpenKey(null)
-    }
-    document.addEventListener('pointerdown', onPointerDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [openKey])
-
-  const openChip = chips.find((c) => c.key === openKey) ?? null
-
-  return (
-    <div ref={rootRef} className="relative w-full space-y-1.5">
-      <div className="flex flex-wrap gap-1.5" aria-label="Capability check">
-        {chips.map((c) => {
-          const active = openKey === c.key
-          return (
-            <button
-              key={c.key}
-              type="button"
-              aria-expanded={active}
-              aria-controls={`capability-info-${c.key}`}
-              onClick={() => setOpenKey((prev) => (prev === c.key ? null : c.key))}
-              className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2.5 py-1 text-left text-[11px] font-medium leading-snug transition ${chipClass(c.tone)} ${
-                active ? 'ring-2 ring-offset-1 ring-gray-300 dark:ring-gray-600 dark:ring-offset-gray-950' : ''
-              }`}
-            >
-              <span className="min-w-0">{c.label}</span>
-              <InfoIcon className="h-3 w-3 shrink-0 opacity-70" />
-            </button>
-          )
-        })}
-      </div>
-
-      {openChip && (
-        <div
-          id={`capability-info-${openChip.key}`}
-          role="dialog"
-          aria-label={openChip.infoTitle}
-          className="animate-fade-in rounded-xl border border-gray-200 bg-white px-3 py-2.5 shadow-lg dark:border-gray-700 dark:bg-gray-900"
-        >
-          <div className="mb-1 flex items-start justify-between gap-2">
-            <p className="text-xs font-semibold text-gray-800 dark:text-gray-100">{openChip.infoTitle}</p>
-            <button
-              type="button"
-              onClick={() => setOpenKey(null)}
-              className="text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-              aria-label="Close info"
-            >
-              Close
-            </button>
-          </div>
-          <p className="text-xs leading-relaxed text-gray-600 dark:text-gray-300">{openChip.infoBody}</p>
-        </div>
-      )}
-    </div>
-  )
 }
 
 export default function Message({ turn, busy, onRedoWithPro }: Props) {
@@ -232,15 +22,13 @@ export default function Message({ turn, busy, onRedoWithPro }: Props) {
     typeof onRedoWithPro === 'function'
 
   const pendingLabel =
-    turn.searchGrounding && turn.searchGrounding !== 'off'
-      ? 'Searching & generating…'
-      : turn.gptMode === 'pro-thinking'
-        ? 'Pro Thinking can take several minutes…'
-        : turn.gptMode === 'direct'
-          ? 'Generating with gpt-image-2…'
-          : turn.bananaMode === 'thinking' || turn.bananaMode === 'pro'
-            ? 'Thinking & generating…'
-            : 'Generating image…'
+    turn.gptMode === 'pro-thinking'
+      ? 'Pro Thinking can take several minutes…'
+      : turn.gptMode === 'direct'
+        ? 'Generating with gpt-image-2…'
+        : turn.bananaMode === 'thinking' || turn.bananaMode === 'pro'
+          ? 'Thinking & generating…'
+          : 'Generating image…'
 
   return (
     <div className={`flex w-full animate-fade-in ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -278,57 +66,30 @@ export default function Message({ turn, busy, onRedoWithPro }: Props) {
           </div>
         )}
 
-        {!isUser && !turn.pending && !turn.error && turn.capability && (
-          <CapabilityChips report={turn.capability} />
-        )}
-
-        {!isUser && !turn.pending && (turn.reasoning || (turn.citations && turn.citations.length > 0)) && (
-          <div className="w-full space-y-2">
-            {turn.reasoning && (
-              <div className="rounded-2xl border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900">
-                <button
-                  type="button"
-                  onClick={() => setShowReasoning((v) => !v)}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-gray-600 dark:text-gray-300"
-                >
-                  <ChevronIcon
-                    className={`h-3.5 w-3.5 transition ${showReasoning ? 'rotate-90' : ''}`}
-                  />
-                  Thinking process
-                  {turn.bananaMode && (
-                    <span className="rounded-full bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">
-                      {bananaModeLabel(turn.bananaMode)}
-                    </span>
-                  )}
-                </button>
-                {showReasoning && (
-                  <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap border-t border-gray-200 px-3 py-2 text-xs text-gray-600 dark:border-gray-700 dark:text-gray-400">
-                    {turn.reasoning}
-                  </pre>
+        {!isUser && !turn.pending && turn.reasoning && (
+          <div className="w-full">
+            <div className="rounded-2xl border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900">
+              <button
+                type="button"
+                onClick={() => setShowReasoning((v) => !v)}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-gray-600 dark:text-gray-300"
+              >
+                <ChevronIcon
+                  className={`h-3.5 w-3.5 transition ${showReasoning ? 'rotate-90' : ''}`}
+                />
+                Thinking process
+                {turn.bananaMode && (
+                  <span className="rounded-full bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                    {bananaModeLabel(turn.bananaMode)}
+                  </span>
                 )}
-              </div>
-            )}
-
-            {turn.citations && turn.citations.length > 0 && (
-              <div className="rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900">
-                <p className="mb-1.5 text-xs font-medium text-gray-600 dark:text-gray-300">Search sources</p>
-                <ul className="space-y-1">
-                  {turn.citations.map((c, i) => (
-                    <li key={`${c.url}-${i}`} className="text-xs">
-                      <a
-                        href={c.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-blue-600 hover:underline dark:text-blue-400"
-                        title={c.content || c.title}
-                      >
-                        {c.title || c.url}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+              </button>
+              {showReasoning && (
+                <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap border-t border-gray-200 px-3 py-2 text-xs text-gray-600 dark:border-gray-700 dark:text-gray-400">
+                  {turn.reasoning}
+                </pre>
+              )}
+            </div>
           </div>
         )}
 

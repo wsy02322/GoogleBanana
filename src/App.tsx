@@ -4,7 +4,6 @@ import type {
   BananaMode,
   GptImageMode,
   ImageSize,
-  SearchGrounding,
   SessionBucket,
   Settings,
   Turn,
@@ -55,7 +54,7 @@ const EXAMPLE_PROMPTS = [
   'A photorealistic banana astronaut floating in space, cinematic lighting',
   "Infographic of today's weather in Tokyo with accurate current conditions",
   'Logo for a fruit startup called "GoogleBanana", minimal flat vector',
-  'Use image search: a resplendent quetzal bird on a misty branch, natural light',
+  'A resplendent quetzal bird on a misty branch, natural light, photorealistic',
 ]
 
 const GPT_EXAMPLE_PROMPTS = [
@@ -75,25 +74,10 @@ export default function App() {
   const [workspace, setWorkspace] = useState<Workspace>(() => loadLastWorkspace())
   const [gptMode, setGptMode] = useState<GptImageMode>('pro-thinking')
   const [bananaMode, setBananaMode] = useState<BananaMode>('thinking')
-  const [searchGrounding, setSearchGrounding] = useState<SearchGrounding>('off')
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1')
   const [imageSize, setImageSize] = useState<ImageSize>('1K')
-  const [modeNotice, setModeNotice] = useState<string | null>(null)
   const [busyByWorkspace, setBusyByWorkspace] = useState<Partial<Record<Workspace, boolean>>>({})
   const scrollRef = useRef<HTMLDivElement>(null)
-  const modeNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const showModeNotice = (message: string) => {
-    if (modeNoticeTimer.current) clearTimeout(modeNoticeTimer.current)
-    setModeNotice(message)
-    modeNoticeTimer.current = setTimeout(() => setModeNotice(null), 8000)
-  }
-
-  useEffect(() => {
-    return () => {
-      if (modeNoticeTimer.current) clearTimeout(modeNoticeTimer.current)
-    }
-  }, [])
 
   const sessions = workspaceSessions[workspace]
   const busy = Boolean(busyByWorkspace[workspace])
@@ -200,35 +184,12 @@ export default function App() {
     setWorkspace('banana')
   }
 
-  const changeBananaMode = (mode: BananaMode) => {
-    setBananaMode(mode)
-    // Native Image Search grounding is Nano Banana 2 only (Google docs).
-    // Pro + Web is fine; Pro + Web/Image is not.
-    if (mode === 'pro' && searchGrounding === 'web-image') {
-      setSearchGrounding('web')
-      showModeNotice(
-        'Pro does not support the Web + Image lane. Switched to Web search. Use Fast/Thinking (Nano Banana 2) for Web + Image.',
-      )
-    }
-  }
-
-  const changeSearchGrounding = (search: SearchGrounding) => {
-    setSearchGrounding(search)
-    if (search === 'web-image' && bananaMode === 'pro') {
-      setBananaMode('thinking')
-      showModeNotice(
-        'Web + Image uses Nano Banana 2 with OpenRouter web grounding (native Google Image Search is not available on this endpoint). Switched from Pro to Thinking.',
-      )
-    }
-  }
-
   const runBananaGenerate = async (
     ws: Workspace,
     conversationId: string,
     history: Turn[],
     assistantId: string,
     mode: BananaMode,
-    search: SearchGrounding,
   ) => {
     const result = await generateImage(
       settings,
@@ -237,7 +198,6 @@ export default function App() {
         aspectRatio,
         imageSize,
         bananaMode: mode,
-        searchGrounding: search,
       },
       generationAbortSignal(),
     )
@@ -250,10 +210,7 @@ export default function App() {
               text: result.text,
               images: result.images,
               reasoning: result.reasoning,
-              citations: result.citations,
               bananaMode: result.bananaMode ?? mode,
-              searchGrounding: result.searchGrounding ?? search,
-              capability: result.capability,
             }
           : t,
       ),
@@ -273,7 +230,6 @@ export default function App() {
       createdAt: Date.now(),
       pending: true,
       bananaMode: jobWorkspace === 'banana' ? bananaMode : undefined,
-      searchGrounding: jobWorkspace === 'banana' ? searchGrounding : undefined,
       gptMode: jobWorkspace === 'gpt' ? gptMode : undefined,
     }
     const history = [...turns, userTurn]
@@ -313,7 +269,6 @@ export default function App() {
           history,
           assistantTurn.id,
           bananaMode,
-          searchGrounding,
         )
       }
     } catch (err) {
@@ -350,21 +305,13 @@ export default function App() {
       createdAt: Date.now(),
       pending: true,
       bananaMode: 'pro',
-      searchGrounding: assistantTurn.searchGrounding ?? searchGrounding,
     }
     updateConversationTurns(jobWorkspace, jobConversationId, [...turns, redoTurn])
     setWorkspaceBusy(jobWorkspace, true)
     setBananaMode('pro')
 
     try {
-      await runBananaGenerate(
-        jobWorkspace,
-        jobConversationId,
-        history,
-        redoTurn.id,
-        'pro',
-        assistantTurn.searchGrounding ?? searchGrounding,
-      )
+      await runBananaGenerate(jobWorkspace, jobConversationId, history, redoTurn.id, 'pro')
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       updateConversationTurns(jobWorkspace, jobConversationId, (prev) =>
@@ -493,7 +440,7 @@ export default function App() {
                   ? 'Add your API key in Settings to get started.'
                   : workspace === 'gpt'
                     ? 'Pick Pro Thinking or Direct below, then describe an image.'
-                    : 'Pick Fast / Thinking / Pro, optional search grounding, then describe an image.'}
+                    : 'Pick Fast / Thinking / Pro, then describe an image.'}
               </p>
               <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2">
                 {emptyPrompts.map((p) => (
@@ -528,14 +475,10 @@ export default function App() {
             workspace={workspace}
             gptMode={gptMode}
             bananaMode={bananaMode}
-            searchGrounding={searchGrounding}
             aspectRatio={aspectRatio}
             imageSize={imageSize}
-            modeNotice={workspace === 'banana' ? modeNotice : null}
-            onDismissModeNotice={() => setModeNotice(null)}
             onChangeGptMode={setGptMode}
-            onChangeBananaMode={changeBananaMode}
-            onChangeSearchGrounding={changeSearchGrounding}
+            onChangeBananaMode={setBananaMode}
             onChangeAspectRatio={setAspectRatio}
             onChangeImageSize={setImageSize}
             onSend={send}

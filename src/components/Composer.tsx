@@ -4,7 +4,6 @@ import type {
   BananaMode,
   GptImageMode,
   ImageSize,
-  SearchGrounding,
   Workspace,
 } from '../lib/types'
 import { bananaModeHint } from '../lib/openrouter'
@@ -16,15 +15,10 @@ interface Props {
   workspace: Workspace
   gptMode: GptImageMode
   bananaMode: BananaMode
-  searchGrounding: SearchGrounding
   aspectRatio: AspectRatio
   imageSize: ImageSize
-  /** Shown when the app auto-corrects an unsupported mode combo. */
-  modeNotice?: string | null
-  onDismissModeNotice?: () => void
   onChangeGptMode: (v: GptImageMode) => void
   onChangeBananaMode: (v: BananaMode) => void
-  onChangeSearchGrounding: (v: SearchGrounding) => void
   onChangeAspectRatio: (v: AspectRatio) => void
   onChangeImageSize: (v: ImageSize) => void
   onSend: (text: string, images: string[]) => void
@@ -52,29 +46,15 @@ const BANANA_MODES: { id: BananaMode; label: string }[] = [
   { id: 'pro', label: 'Pro' },
 ]
 
-const SEARCH_OPTIONS: { id: SearchGrounding; label: string; hint: string }[] = [
-  { id: 'off', label: 'No search', hint: 'Offline world knowledge only' },
-  { id: 'web', label: 'Web', hint: 'OpenRouter web plugin · injects live results' },
-  {
-    id: 'web-image',
-    label: 'Web + Image',
-    hint: 'Richer web grounding on Nano Banana 2 (OpenRouter has no Image Search tool)',
-  },
-]
-
 export default function Composer({
   disabled,
   workspace,
   gptMode,
   bananaMode,
-  searchGrounding,
   aspectRatio,
   imageSize,
-  modeNotice,
-  onDismissModeNotice,
   onChangeGptMode,
   onChangeBananaMode,
-  onChangeSearchGrounding,
   onChangeAspectRatio,
   onChangeImageSize,
   onSend,
@@ -134,77 +114,25 @@ export default function Composer({
           </span>
         </div>
       ) : (
-        <div className="mb-3 space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            {BANANA_MODES.map((m) => {
-              const active = bananaMode === m.id
-              const unavailable = m.id === 'pro' && searchGrounding === 'web-image'
-              return (
-                <button
-                  key={m.id}
-                  type="button"
-                  disabled={disabled || unavailable}
-                  onClick={() => onChangeBananaMode(m.id)}
-                  title={
-                    unavailable
-                      ? 'Pro does not support Image Search; use Fast/Thinking, or switch back to Web'
-                      : bananaModeHint(m.id)
-                  }
-                  className={`${pillClass(active)} ${
-                    unavailable
-                      ? 'cursor-not-allowed border-red-300 bg-red-50 text-red-700 opacity-80 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300'
-                      : 'disabled:cursor-not-allowed disabled:opacity-50'
-                  }`}
-                >
-                  {m.label}
-                </button>
-              )
-            })}
-            <span className="text-xs text-gray-400 dark:text-gray-500">
-              {bananaModeHint(bananaMode)}
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {SEARCH_OPTIONS.map((s) => {
-              const active = searchGrounding === s.id
-              return (
-                <button
-                  key={s.id}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => onChangeSearchGrounding(s.id)}
-                  title={s.hint}
-                  className={pillClass(active)}
-                >
-                  {s.label}
-                </button>
-              )
-            })}
-            <span className="text-xs text-gray-400 dark:text-gray-500">
-              {SEARCH_OPTIONS.find((s) => s.id === searchGrounding)?.hint}
-            </span>
-          </div>
-          {modeNotice && (
-            <div
-              role="alert"
-              className="flex items-start gap-2 rounded-xl border-2 border-red-500 bg-red-50 px-3 py-2.5 text-sm font-medium text-red-800 dark:border-red-400 dark:bg-red-950/60 dark:text-red-200"
-            >
-              <span className="mt-0.5 shrink-0 text-base leading-none" aria-hidden>
-                !
-              </span>
-              <p className="min-w-0 flex-1 leading-snug">{modeNotice}</p>
-              {onDismissModeNotice && (
-                <button
-                  type="button"
-                  onClick={onDismissModeNotice}
-                  className="shrink-0 rounded-md p-0.5 text-red-700 hover:bg-red-100 dark:text-red-200 dark:hover:bg-red-900"
-                  aria-label="Dismiss notice"
-                >
-                  <CloseIcon className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-          )}
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          {BANANA_MODES.map((m) => {
+            const active = bananaMode === m.id
+            return (
+              <button
+                key={m.id}
+                type="button"
+                disabled={disabled}
+                onClick={() => onChangeBananaMode(m.id)}
+                title={bananaModeHint(m.id)}
+                className={pillClass(active)}
+              >
+                {m.label}
+              </button>
+            )
+          })}
+          <span className="text-xs text-gray-400 dark:text-gray-500">
+            {bananaModeHint(bananaMode)}
+          </span>
         </div>
       )}
 
