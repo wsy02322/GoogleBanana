@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { AspectRatio, ImageSize, Settings, SessionsData, Turn } from './lib/types'
+import type {
+  AspectRatio,
+  GptImageMode,
+  ImageSize,
+  Settings,
+  SessionsData,
+  Turn,
+  Workspace,
+} from './lib/types'
 import {
   loadSettings,
   saveSettings,
@@ -8,12 +16,20 @@ import {
   createConversation,
   conversationTitle,
 } from './lib/storage'
-import { generateImage } from './lib/openrouter'
+import { generateImage, generateGptImage, gptModeLabel, gptModeModelId } from './lib/openrouter'
 import Composer from './components/Composer'
 import Message from './components/Message'
 import SettingsModal from './components/SettingsModal'
 import Sidebar from './components/Sidebar'
-import { MenuIcon, PlusIcon, SettingsIcon, SunIcon, MoonIcon } from './components/icons'
+import {
+  MenuIcon,
+  PlusIcon,
+  SettingsIcon,
+  SunIcon,
+  MoonIcon,
+  SparklesIcon,
+  ArrowLeftIcon,
+} from './components/icons'
 
 function uid(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36)
@@ -32,11 +48,20 @@ const EXAMPLE_PROMPTS = [
   'A watercolor painting of Tokyo streets in the rain at night',
 ]
 
+const GPT_EXAMPLE_PROMPTS = [
+  'Four-panel infographic explaining OAuth 2.1 with labeled arrows in English and Japanese',
+  'Product hero shot of a matte black mechanical keyboard, studio softbox lighting',
+  'Technical cross-section of a bicycle hub with numbered callouts',
+  'Editorial portrait of a chef plating dessert, shallow depth of field',
+]
+
 export default function App() {
   const [settings, setSettings] = useState<Settings>(() => loadSettings())
   const [sessions, setSessions] = useState<SessionsData>(() => loadSessions())
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [workspace, setWorkspace] = useState<Workspace>('banana')
+  const [gptMode, setGptMode] = useState<GptImageMode>('pro-thinking')
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1')
   const [imageSize, setImageSize] = useState<ImageSize>('1K')
   const [busy, setBusy] = useState(false)
@@ -115,6 +140,18 @@ export default function App() {
     })
   }
 
+  const enterGptWorkspace = () => {
+    if (busy) return
+    setWorkspace('gpt')
+    // Prefer a stronger default resolution for GPT Image studio.
+    setImageSize((prev) => (prev === '1K' ? '2K' : prev))
+  }
+
+  const leaveGptWorkspace = () => {
+    if (busy) return
+    setWorkspace('banana')
+  }
+
   const send = async (text: string, images: string[]) => {
     if (busy || !activeConversation) return
     const userTurn: Turn = { id: uid(), role: 'user', text, images, createdAt: Date.now() }
@@ -131,7 +168,10 @@ export default function App() {
     setBusy(true)
 
     try {
-      const result = await generateImage(settings, history, { aspectRatio, imageSize })
+      const result =
+        workspace === 'gpt'
+          ? await generateGptImage(settings, history, { aspectRatio, imageSize, mode: gptMode })
+          : await generateImage(settings, history, { aspectRatio, imageSize })
       updateActiveTurns((prev) =>
         prev.map((t) =>
           t.id === assistantTurn.id
@@ -155,6 +195,9 @@ export default function App() {
   }
 
   const isEmpty = turns.length === 0
+  const emptyPrompts = workspace === 'gpt' ? GPT_EXAMPLE_PROMPTS : EXAMPLE_PROMPTS
+  const modelBadge =
+    workspace === 'gpt' ? `${gptModeLabel(gptMode)} · ${gptModeModelId(gptMode)}` : settings.model || 'no model'
 
   return (
     <div className="flex h-full bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100">
@@ -179,13 +222,38 @@ export default function App() {
             >
               <MenuIcon className="h-5 w-5" />
             </button>
-            <span className="text-2xl">🍌</span>
-            <h1 className="truncate text-lg font-semibold">GoogleBanana</h1>
-            <span className="hidden rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500 sm:inline dark:bg-gray-800 dark:text-gray-400">
-              {settings.model || 'no model'}
+            {workspace === 'gpt' ? (
+              <button
+                onClick={leaveGptWorkspace}
+                className="rounded-full p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+                aria-label="Back to nano banana"
+                title="Back to nano banana"
+              >
+                <ArrowLeftIcon className="h-5 w-5" />
+              </button>
+            ) : (
+              <span className="text-2xl">🍌</span>
+            )}
+            <h1 className="truncate text-lg font-semibold">
+              {workspace === 'gpt' ? 'GPT Image' : 'GoogleBanana'}
+            </h1>
+            <span className="hidden max-w-[14rem] truncate rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500 sm:inline dark:bg-gray-800 dark:text-gray-400 lg:max-w-xs">
+              {modelBadge}
             </span>
           </div>
           <div className="flex items-center gap-1">
+            {workspace === 'banana' && (
+              <button
+                onClick={enterGptWorkspace}
+                disabled={busy}
+                className="flex items-center gap-1.5 rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:border-gray-300 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-200 dark:hover:border-gray-600 dark:hover:bg-gray-900"
+                aria-label="Open GPT Image studio"
+                title="GPT Image · Pro Thinking / Direct"
+              >
+                <SparklesIcon className="h-4 w-4" />
+                <span className="hidden sm:inline">GPT Image</span>
+              </button>
+            )}
             <button
               onClick={newChat}
               className="rounded-full p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
@@ -217,15 +285,21 @@ export default function App() {
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           {isEmpty ? (
             <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center px-4 text-center">
-              <div className="mb-4 text-6xl">🍌</div>
-              <h2 className="mb-2 text-2xl font-semibold">Generate images with nano banana</h2>
+              <div className="mb-4 text-6xl">{workspace === 'gpt' ? '✨' : '🍌'}</div>
+              <h2 className="mb-2 text-2xl font-semibold">
+                {workspace === 'gpt'
+                  ? 'Generate with GPT Image on OpenRouter'
+                  : 'Generate images with nano banana'}
+              </h2>
               <p className="mb-8 text-gray-500 dark:text-gray-400">
-                {hasKey
-                  ? 'Type a prompt below, or attach an image to edit it.'
-                  : 'Add your API key in Settings to get started.'}
+                {!hasKey
+                  ? 'Add your API key in Settings to get started.'
+                  : workspace === 'gpt'
+                    ? 'Pick Pro Thinking or Direct below, then describe an image.'
+                    : 'Type a prompt below, or attach an image to edit it.'}
               </p>
               <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2">
-                {EXAMPLE_PROMPTS.map((p) => (
+                {emptyPrompts.map((p) => (
                   <button
                     key={p}
                     disabled={!hasKey || busy}
@@ -249,8 +323,11 @@ export default function App() {
         <div className="border-t border-gray-100 px-4 py-4 dark:border-gray-800">
           <Composer
             disabled={!hasKey || busy}
+            workspace={workspace}
+            gptMode={gptMode}
             aspectRatio={aspectRatio}
             imageSize={imageSize}
+            onChangeGptMode={setGptMode}
             onChangeAspectRatio={setAspectRatio}
             onChangeImageSize={setImageSize}
             onSend={send}
