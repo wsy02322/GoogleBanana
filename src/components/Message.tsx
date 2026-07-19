@@ -42,17 +42,17 @@ function buildStatusChips(report: CapabilityReport): StatusChip[] {
     report.imageOk
       ? {
           key: 'image',
-          label: '已出图',
+          label: 'Image ready',
           tone: 'ok',
-          infoTitle: '图片已生成',
-          infoBody: '这次请求成功返回了图片，可以直接查看或下载。',
+          infoTitle: 'Image generated',
+          infoBody: 'This request returned an image. You can view or download it.',
         }
       : {
           key: 'image',
-          label: '未出图',
+          label: 'No image',
           tone: 'warn',
-          infoTitle: '没有收到图片',
-          infoBody: '模型这次没有返回图片。可以换个提示词，或切换 Fast / Thinking / Pro 后再试。',
+          infoTitle: 'No image received',
+          infoBody: 'The model did not return an image. Try another prompt, or switch Fast / Thinking / Pro and retry.',
         },
   )
 
@@ -60,82 +60,82 @@ function buildStatusChips(report: CapabilityReport): StatusChip[] {
     key: 'mode',
     label: bananaModeLabel(report.mode),
     tone: 'info',
-    infoTitle: `模式：${bananaModeLabel(report.mode)}`,
-    infoBody: `${bananaModeHint(report.mode)}。实际模型：${report.model}`,
+    infoTitle: `Mode: ${bananaModeLabel(report.mode)}`,
+    infoBody: `${bananaModeHint(report.mode)}. Model: ${report.model}`,
   })
 
   if (report.thinking === 'returned') {
     chips.push({
       key: 'think',
-      label: '思考可见',
+      label: 'Thinking shown',
       tone: 'ok',
-      infoTitle: '思考过程已返回',
-      infoBody: '模型把思考内容一并返回了。点下方「思考过程」可以展开查看它怎么想的。',
+      infoTitle: 'Thinking text returned',
+      infoBody: 'The model included its thinking in the reply. Open “Thinking process” below to read it.',
     })
   } else if (report.thinking === 'not_returned') {
     chips.push({
       key: 'think',
-      label: '思考未显示',
+      label: 'Thinking hidden',
       tone: 'warn',
-      infoTitle: '没有看到思考内容',
+      infoTitle: 'No thinking text',
       infoBody:
-        '这次用了较深的思考模式，但回复里没有附带思考文本。模型后台可能仍在思考，只是我们看不到过程。',
+        'Deeper thinking was requested, but no thinking text came back. The model may still have thought behind the scenes.',
     })
   } else {
     chips.push({
       key: 'think',
-      label: '快速思考',
+      label: 'Light thinking',
       tone: 'muted',
-      infoTitle: '快速模式',
-      infoBody: 'Fast 模式为了速度，只做很轻的思考，一般不会展开详细思考过程。',
+      infoTitle: 'Fast mode',
+      infoBody: 'Fast mode uses light thinking for speed, so a detailed thinking trace usually is not shown.',
     })
   }
 
   if (report.searchEvidence === 'off') {
     chips.push({
       key: 'search',
-      label: '未开搜索',
+      label: 'Search off',
       tone: 'muted',
-      infoTitle: '没有使用搜索',
-      infoBody: '这次没有打开联网搜索。图片只依据模型已有知识生成，不含实时网页信息。',
+      infoTitle: 'Search was not used',
+      infoBody: 'Web search was off for this image. It was generated from the model’s existing knowledge only.',
     })
   } else if (report.searchEvidence === 'cited') {
     chips.push({
       key: 'search',
       label: report.searchFallback
-        ? `搜索已用上（网页）· ${report.citationCount}`
-        : `搜索已用上 · ${report.citationCount}`,
+        ? `Search used (web) · ${report.citationCount}`
+        : `Search used · ${report.citationCount}`,
       tone: 'ok',
-      infoTitle: '搜索结果进入了回复',
+      infoTitle: 'Search results appear in the reply',
       infoBody: report.searchFallback
-        ? `图片搜索不可用，已改用网页搜索。回复里列出了 ${report.citationCount} 个来源，说明搜索内容进了文字回复。但系统无法确认这些信息是否真的改变了最终画面。`
-        : `回复里列出了 ${report.citationCount} 个来源，这是目前能确认的最强信号：搜索结果进入了模型输出。但系统无法确认这些信息是否真的改变了最终画面。`,
+        ? `Image search was unavailable, so web search was used instead. ${report.citationCount} source(s) are listed in the reply — the strongest sign search entered the text output. We still cannot prove those facts changed the final image.`
+        : `${report.citationCount} source(s) are listed in the reply — the strongest sign search entered the model output. We still cannot prove those facts changed the final image.`,
     })
   } else if (report.searchEvidence === 'called') {
     chips.push({
       key: 'search',
-      label: '搜索已调用',
+      label: 'Search ran',
       tone: 'warn',
-      infoTitle: '搜索跑了，但看不出用没用上',
-      infoBody: `检测到搜索被调用了${typeof report.searchCalls === 'number' ? ` ${report.searchCalls} 次` : ''}，但回复里没有来源链接。只能确定「搜过了」，不能确定结果有没有写进回复或影响画面。`,
+      infoTitle: 'Search ran, use unclear',
+      infoBody: `Search was called${typeof report.searchCalls === 'number' ? ` ${report.searchCalls} time(s)` : ''}, but no sources were listed. We know a search happened, not whether results shaped the reply or the image.`,
     })
   } else if (report.searchEvidence === 'fallback') {
     chips.push({
       key: 'search',
-      label: '搜索降级',
+      label: 'Search limited',
       tone: 'warn',
-      infoTitle: '图片搜索不可用',
+      infoTitle: 'Image search unavailable',
       infoBody:
-        '你选了「网页 + 图片搜索」，但图片搜索接口不可用，已自动改用网页搜索；这次也没有看到明确的搜索来源。画面很可能没有用到实时搜索。',
+        'You chose Web + Image Search, but image search was unavailable. We fell back to web search and still saw no clear sources. The image likely did not use live search.',
     })
   } else {
     chips.push({
       key: 'search',
-      label: '搜索可能没用上',
+      label: 'Search unused?',
       tone: 'warn',
-      infoTitle: '看不到搜索证据',
+      infoTitle: 'No search evidence',
       infoBody:
-        '你打开了搜索，但既没有搜索调用记录，也没有来源链接。更可能是模型这次跳过了搜索，画面主要靠已有知识生成。',
+        'Search was on, but there were no search calls and no sources. The model probably skipped search, and the image was mostly from existing knowledge.',
     })
   }
 
@@ -167,7 +167,7 @@ function CapabilityChips({ report }: { report: CapabilityReport }) {
 
   return (
     <div ref={rootRef} className="relative w-full space-y-1.5">
-      <div className="flex flex-wrap gap-1.5" aria-label="能力检查">
+      <div className="flex flex-wrap gap-1.5" aria-label="Capability check">
         {chips.map((c) => {
           const active = openKey === c.key
           return (
@@ -201,9 +201,9 @@ function CapabilityChips({ report }: { report: CapabilityReport }) {
               type="button"
               onClick={() => setOpenKey(null)}
               className="text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-              aria-label="关闭说明"
+              aria-label="Close info"
             >
-              关闭
+              Close
             </button>
           </div>
           <p className="text-xs leading-relaxed text-gray-600 dark:text-gray-300">{openChip.infoBody}</p>
@@ -226,10 +226,10 @@ export default function Message({ turn, busy, onRedoWithPro }: Props) {
 
   const pendingLabel =
     turn.searchGrounding && turn.searchGrounding !== 'off'
-      ? '正在搜索并生成…'
+      ? 'Searching & generating…'
       : turn.bananaMode === 'thinking' || turn.bananaMode === 'pro'
-        ? '正在思考并生成…'
-        : '正在生成图片…'
+        ? 'Thinking & generating…'
+        : 'Generating image…'
 
   return (
     <div className={`flex w-full animate-fade-in ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -278,7 +278,7 @@ export default function Message({ turn, busy, onRedoWithPro }: Props) {
                   <ChevronIcon
                     className={`h-3.5 w-3.5 transition ${showReasoning ? 'rotate-90' : ''}`}
                   />
-                  思考过程
+                  Thinking process
                   {turn.bananaMode && (
                     <span className="rounded-full bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">
                       {bananaModeLabel(turn.bananaMode)}
@@ -295,7 +295,7 @@ export default function Message({ turn, busy, onRedoWithPro }: Props) {
 
             {turn.citations && turn.citations.length > 0 && (
               <div className="rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900">
-                <p className="mb-1.5 text-xs font-medium text-gray-600 dark:text-gray-300">搜索来源</p>
+                <p className="mb-1.5 text-xs font-medium text-gray-600 dark:text-gray-300">Search sources</p>
                 <ul className="space-y-1">
                   {turn.citations.map((c, i) => (
                     <li key={`${c.url}-${i}`} className="text-xs">
@@ -348,7 +348,7 @@ export default function Message({ turn, busy, onRedoWithPro }: Props) {
             title="Regenerate with Nano Banana Pro"
           >
             <RefreshIcon className="h-3.5 w-3.5" />
-            用 Pro 重做
+            Redo with Pro
           </button>
         )}
       </div>
