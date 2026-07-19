@@ -42,23 +42,24 @@ function buildStatusChips(report: CapabilityReport): StatusChip[] {
     report.imageOk
       ? {
           key: 'image',
-          label: 'Image ready',
+          label: 'Image generated successfully',
           tone: 'ok',
           infoTitle: 'Image generated',
           infoBody: 'This request returned an image. You can view or download it.',
         }
       : {
           key: 'image',
-          label: 'No image',
+          label: 'No image was returned',
           tone: 'warn',
           infoTitle: 'No image received',
-          infoBody: 'The model did not return an image. Try another prompt, or switch Fast / Thinking / Pro and retry.',
+          infoBody:
+            'The model did not return an image. Try another prompt, or switch Fast / Thinking / Pro and retry.',
         },
   )
 
   chips.push({
     key: 'mode',
-    label: bananaModeLabel(report.mode),
+    label: `${bananaModeLabel(report.mode)} mode`,
     tone: 'info',
     infoTitle: `Mode: ${bananaModeLabel(report.mode)}`,
     infoBody: `${bananaModeHint(report.mode)}. Model: ${report.model}`,
@@ -67,15 +68,16 @@ function buildStatusChips(report: CapabilityReport): StatusChip[] {
   if (report.thinking === 'returned') {
     chips.push({
       key: 'think',
-      label: 'Thinking shown',
+      label: 'Thinking process is visible',
       tone: 'ok',
       infoTitle: 'Thinking text returned',
-      infoBody: 'The model included its thinking in the reply. Open “Thinking process” below to read it.',
+      infoBody:
+        'The model included its thinking in the reply. Open “Thinking process” below to read it.',
     })
   } else if (report.thinking === 'not_returned') {
     chips.push({
       key: 'think',
-      label: 'Thinking hidden',
+      label: 'Thinking was requested but not shown',
       tone: 'warn',
       infoTitle: 'No thinking text',
       infoBody:
@@ -84,27 +86,29 @@ function buildStatusChips(report: CapabilityReport): StatusChip[] {
   } else {
     chips.push({
       key: 'think',
-      label: 'Light thinking',
+      label: 'Using light thinking for speed',
       tone: 'muted',
       infoTitle: 'Fast mode',
-      infoBody: 'Fast mode uses light thinking for speed, so a detailed thinking trace usually is not shown.',
+      infoBody:
+        'Fast mode uses light thinking for speed, so a detailed thinking trace usually is not shown.',
     })
   }
 
   if (report.searchEvidence === 'off') {
     chips.push({
       key: 'search',
-      label: 'Search off',
+      label: 'Web search was turned off',
       tone: 'muted',
       infoTitle: 'Search was not used',
-      infoBody: 'Web search was off for this image. It was generated from the model’s existing knowledge only.',
+      infoBody:
+        'Web search was off for this image. It was generated from the model’s existing knowledge only.',
     })
   } else if (report.searchEvidence === 'cited') {
     chips.push({
       key: 'search',
       label: report.searchFallback
-        ? `Search used (web) · ${report.citationCount}`
-        : `Search used · ${report.citationCount}`,
+        ? `Search used via web fallback · ${report.citationCount} source${report.citationCount === 1 ? '' : 's'}`
+        : `Search results used in reply · ${report.citationCount} source${report.citationCount === 1 ? '' : 's'}`,
       tone: 'ok',
       infoTitle: 'Search results appear in the reply',
       infoBody: report.searchFallback
@@ -114,7 +118,10 @@ function buildStatusChips(report: CapabilityReport): StatusChip[] {
   } else if (report.searchEvidence === 'called') {
     chips.push({
       key: 'search',
-      label: 'Search ran',
+      label:
+        typeof report.searchCalls === 'number'
+          ? `Search ran ${report.searchCalls} time${report.searchCalls === 1 ? '' : 's'}, but no sources listed`
+          : 'Search ran, but no sources were listed',
       tone: 'warn',
       infoTitle: 'Search ran, use unclear',
       infoBody: `Search was called${typeof report.searchCalls === 'number' ? ` ${report.searchCalls} time(s)` : ''}, but no sources were listed. We know a search happened, not whether results shaped the reply or the image.`,
@@ -122,7 +129,7 @@ function buildStatusChips(report: CapabilityReport): StatusChip[] {
   } else if (report.searchEvidence === 'fallback') {
     chips.push({
       key: 'search',
-      label: 'Search limited',
+      label: 'Image search failed; fell back to web with no sources',
       tone: 'warn',
       infoTitle: 'Image search unavailable',
       infoBody:
@@ -131,7 +138,7 @@ function buildStatusChips(report: CapabilityReport): StatusChip[] {
   } else {
     chips.push({
       key: 'search',
-      label: 'Search unused?',
+      label: 'Search was on, but nothing shows it was used',
       tone: 'warn',
       infoTitle: 'No search evidence',
       infoBody:
@@ -177,12 +184,12 @@ function CapabilityChips({ report }: { report: CapabilityReport }) {
               aria-expanded={active}
               aria-controls={`capability-info-${c.key}`}
               onClick={() => setOpenKey((prev) => (prev === c.key ? null : c.key))}
-              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${chipClass(c.tone)} ${
+              className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2.5 py-1 text-left text-[11px] font-medium leading-snug transition ${chipClass(c.tone)} ${
                 active ? 'ring-2 ring-offset-1 ring-gray-300 dark:ring-gray-600 dark:ring-offset-gray-950' : ''
               }`}
             >
-              <span>{c.label}</span>
-              <InfoIcon className="h-3 w-3 opacity-70" />
+              <span className="min-w-0">{c.label}</span>
+              <InfoIcon className="h-3 w-3 shrink-0 opacity-70" />
             </button>
           )
         })}
