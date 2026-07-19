@@ -339,28 +339,32 @@ function latestUserReferences(history: Turn[]): Array<{ type: 'image_url'; image
   return []
 }
 
-function buildBananaTools(search: SearchGrounding): unknown[] | undefined {
+function buildBananaSearchPlugins(
+  search: SearchGrounding,
+  engine: 'native' | 'exa' = 'native',
+): unknown[] | undefined {
   if (search === 'off') return undefined
 
-  // Web + Image Search: prefer Google-native tool shape (NB2 Image Search).
-  // If OpenRouter/upstream rejects it, generateImage falls back to web-only.
-  if (search === 'web-image') {
-    return [
-      {
-        type: 'google_search',
-        search_types: ['web_search', 'image_search'],
-      },
-    ]
-  }
+  // OpenRouter Gemini *image* endpoints do not advertise tool-calling, so
+  // `tools: [{ type: "openrouter:web_search" }]` / `google_search` returns:
+  // "No endpoints found that support tool use".
+  // Use the web plugin instead — it injects search results into the prompt
+  // without requiring a tool-capable endpoint.
+  //
+  // Native Google Image Search grounding is not exposed on these OpenRouter
+  // image endpoints; Web + Image therefore uses a richer web plugin prompt.
+  const today = new Date().toISOString().slice(0, 10)
+  const search_prompt =
+    search === 'web-image'
+      ? `A web search was conducted on ${today}. Use these results as factual and visual references before generating the image. Prefer official/current pages for "today/current/latest" requests. Cite sources with markdown links named by domain.`
+      : `A web search was conducted on ${today}. Incorporate the following web search results into your response and image. Cite them using markdown links named using the domain of the source.`
 
-  // Web-only: OpenRouter server tool (native Google search when available).
   return [
     {
-      type: 'openrouter:web_search',
-      parameters: {
-        engine: 'native',
-        max_results: 5,
-      },
+      id: 'web',
+      engine,
+      max_results: search === 'web-image' ? 8 : 5,
+      search_prompt,
     },
   ]
 }
@@ -374,15 +378,14 @@ function withSearchHint(
 
   const requirement =
     search === 'web-image'
-      ? 'You MUST call both web search and image search before generating. Use retrieved current facts and image results as visual references. Do not rely on internal knowledge or invent dates, sources, or current events.'
-      : 'You MUST call web search before generating. Ground current facts in retrieved results. Do not rely on internal knowledge or invent dates, sources, or current events.'
+      ? 'Web search results are provided below/with this request. You MUST ground the image in those current results and cite sources. Do not invent dates, sources, or current events from memory.'
+      : 'Web search results are provided below/with this request. You MUST ground current facts in those results and cite sources. Do not invent dates, sources, or current events from memory.'
   const retry =
     evidenceRetry
-      ? ' This is a required retry because the previous result contained no verifiable search call or source. Do not generate until search succeeds.'
+      ? ' This is a required retry because the previous result contained no verifiable sources. Cite at least one search result.'
       : ''
   const hint = `${requirement}${retry}`
 
-  // Prepend a light system-style user cue only if the latest user turn has no prior hint.
   const last = messages[messages.length - 1]
   if (last.role !== 'user') return messages
 
@@ -412,6 +415,7 @@ async function generateBananaImage(
     searchRequested: SearchGrounding
     searchFallback: boolean
     evidenceRetry: boolean
+    searchEngine?: 'native' | 'exa'
   },
 ): Promise<GenerateResult> {
   if (!settings.apiKey.trim()) {
@@ -419,14 +423,15 @@ async function generateBananaImage(
   }
 
   const searchGrounding: SearchGrounding = opts.searchGrounding ?? 'off'
-  // Image Search is a Nano Banana 2 capability. Enforce this in the request
-  // layer as well as the UI so stale clients cannot send Pro + Web/Image.
+  // Image Search is a Nano Banana 2 capability on Google's API. On OpenRouter
+  // we still route Web + Image to NB2 and use the web plugin (see below).
   const requestedMode: BananaMode = opts.bananaMode ?? 'thinking'
   const bananaMode: BananaMode =
     searchGrounding === 'web-image' && requestedMode === 'pro' ? 'thinking' : requestedMode
   const model = bananaModeModelId(bananaMode)
   const effort = bananaReasoningEffort(bananaMode)
-  const tools = buildBananaTools(searchGrounding)
+  const searchEngine = meta.searchEngine ?? 'native'
+  const plugins = buildBananaSearchPlugins(searchGrounding, searchEngine)
   const messages = withSearchHint(buildMessages(history), searchGrounding, meta.evidenceRetry)
 
   const body: Record<string, unknown> = {
@@ -441,7 +446,7 @@ async function generateBananaImage(
       image_size: opts.imageSize,
     },
   }
-  if (tools) body.tools = tools
+  if (plugins) body.plugins = plugins
 
   const res = await fetch('/proxy', {
     method: 'POST',
@@ -450,8 +455,8 @@ async function generateBananaImage(
     signal,
   })
 
-  // If Image Search native tool is rejected, retry once with web-only search.
-  if (!res.ok && searchGrounding === 'web-image') {
+  // Native Google search may be unavailable for some image endpoints — fall back to Exa.
+  if (!res.ok && searchGrounding !== 'off' && searchEngine === 'native') {
     const raw = await res.text()
     let msg = `Request failed with HTTP ${res.status}`
     try {
@@ -460,19 +465,14 @@ async function generateBananaImage(
     } catch {
       if (raw) msg = raw.slice(0, 300)
     }
-    const looksLikeToolError = /tool|google_search|search_types|unsupported/i.test(msg)
-    if (looksLikeToolError) {
-      return generateBananaImage(
-        settings,
-        history,
-        { ...opts, searchGrounding: 'web' },
-        signal,
-        {
-          searchRequested: meta.searchRequested,
-          searchFallback: true,
-          evidenceRetry: meta.evidenceRetry,
-        },
-      )
+    const looksLikeSearchRouteError =
+      /tool use|plugin|web search|native|endpoint|grounding|unsupported/i.test(msg)
+    if (looksLikeSearchRouteError) {
+      return generateBananaImage(settings, history, opts, signal, {
+        ...meta,
+        searchFallback: true,
+        searchEngine: 'exa',
+      })
     }
     throw new Error(msg)
   }
@@ -491,7 +491,7 @@ async function generateBananaImage(
       })
     }
     throw new Error(
-      'Search was required, but the model returned no search calls or sources after two attempts. The ungrounded image was discarded; try Web search, switch to Nano Banana 2, or provide a reference image.',
+      'Search was required, but the response had no cited sources after two attempts. The ungrounded image was discarded. Try again, attach a reference image, or turn search off.',
     )
   }
 

@@ -54,11 +54,11 @@ const BANANA_MODES: { id: BananaMode; label: string }[] = [
 
 const SEARCH_OPTIONS: { id: SearchGrounding; label: string; hint: string }[] = [
   { id: 'off', label: 'No search', hint: 'Offline world knowledge only' },
-  { id: 'web', label: 'Web', hint: 'Google Search grounding' },
+  { id: 'web', label: 'Web', hint: 'OpenRouter web plugin · injects live results' },
   {
     id: 'web-image',
     label: 'Web + Image',
-    hint: 'Verified Web + Image Search · Nano Banana 2 only',
+    hint: 'Richer web grounding on Nano Banana 2 (OpenRouter has no Image Search tool)',
   },
 ]
 

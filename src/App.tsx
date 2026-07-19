@@ -207,7 +207,7 @@ export default function App() {
     if (mode === 'pro' && searchGrounding === 'web-image') {
       setSearchGrounding('web')
       showModeNotice(
-        'Pro does not support Image Search. Switched to Web search. Use Fast/Thinking (Nano Banana 2) for Web + Image.',
+        'Pro does not support the Web + Image lane. Switched to Web search. Use Fast/Thinking (Nano Banana 2) for Web + Image.',
       )
     }
   }
@@ -217,7 +217,7 @@ export default function App() {
     if (search === 'web-image' && bananaMode === 'pro') {
       setBananaMode('thinking')
       showModeNotice(
-        'Web + Image Search requires Nano Banana 2. Switched from Pro to Thinking. Pro still works with Web search.',
+        'Web + Image uses Nano Banana 2 with OpenRouter web grounding (native Google Image Search is not available on this endpoint). Switched from Pro to Thinking.',
       )
     }
   }
