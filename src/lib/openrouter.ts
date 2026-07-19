@@ -365,13 +365,22 @@ function buildBananaTools(search: SearchGrounding): unknown[] | undefined {
   ]
 }
 
-function withSearchHint(messages: ChatMessage[], search: SearchGrounding): ChatMessage[] {
+function withSearchHint(
+  messages: ChatMessage[],
+  search: SearchGrounding,
+  evidenceRetry: boolean,
+): ChatMessage[] {
   if (search === 'off' || messages.length === 0) return messages
 
-  const hint =
+  const requirement =
     search === 'web-image'
-      ? 'Use web search and image search grounding when helpful: look up current facts and accurate visual references before generating the image.'
-      : 'Use web search grounding when helpful: look up current facts before generating the image.'
+      ? 'You MUST call both web search and image search before generating. Use retrieved current facts and image results as visual references. Do not rely on internal knowledge or invent dates, sources, or current events.'
+      : 'You MUST call web search before generating. Ground current facts in retrieved results. Do not rely on internal knowledge or invent dates, sources, or current events.'
+  const retry =
+    evidenceRetry
+      ? ' This is a required retry because the previous result contained no verifiable search call or source. Do not generate until search succeeds.'
+      : ''
+  const hint = `${requirement}${retry}`
 
   // Prepend a light system-style user cue only if the latest user turn has no prior hint.
   const last = messages[messages.length - 1]
@@ -390,6 +399,7 @@ export async function generateImage(
   return generateBananaImage(settings, history, opts, signal, {
     searchRequested: opts.searchGrounding ?? 'off',
     searchFallback: false,
+    evidenceRetry: false,
   })
 }
 
@@ -398,18 +408,26 @@ async function generateBananaImage(
   history: Turn[],
   opts: GenerateOptions,
   signal: AbortSignal | undefined,
-  meta: { searchRequested: SearchGrounding; searchFallback: boolean },
+  meta: {
+    searchRequested: SearchGrounding
+    searchFallback: boolean
+    evidenceRetry: boolean
+  },
 ): Promise<GenerateResult> {
   if (!settings.apiKey.trim()) {
     throw new Error('No API key set. Open Settings and paste your OpenRouter API key.')
   }
 
-  const bananaMode: BananaMode = opts.bananaMode ?? 'thinking'
   const searchGrounding: SearchGrounding = opts.searchGrounding ?? 'off'
+  // Image Search is a Nano Banana 2 capability. Enforce this in the request
+  // layer as well as the UI so stale clients cannot send Pro + Web/Image.
+  const requestedMode: BananaMode = opts.bananaMode ?? 'thinking'
+  const bananaMode: BananaMode =
+    searchGrounding === 'web-image' && requestedMode === 'pro' ? 'thinking' : requestedMode
   const model = bananaModeModelId(bananaMode)
   const effort = bananaReasoningEffort(bananaMode)
   const tools = buildBananaTools(searchGrounding)
-  const messages = withSearchHint(buildMessages(history), searchGrounding)
+  const messages = withSearchHint(buildMessages(history), searchGrounding, meta.evidenceRetry)
 
   const body: Record<string, unknown> = {
     model,
@@ -449,7 +467,11 @@ async function generateBananaImage(
         history,
         { ...opts, searchGrounding: 'web' },
         signal,
-        { searchRequested: meta.searchRequested, searchFallback: true },
+        {
+          searchRequested: meta.searchRequested,
+          searchFallback: true,
+          evidenceRetry: meta.evidenceRetry,
+        },
       )
     }
     throw new Error(msg)
@@ -458,6 +480,20 @@ async function generateBananaImage(
   const data = await parseProxyResponse(res)
   const result = imagesFromChatCompletion(data)
   const citationCount = result.citations?.length ?? 0
+  const hasSearchEvidence =
+    citationCount > 0 || (typeof result.searchCalls === 'number' && result.searchCalls > 0)
+
+  if (meta.searchRequested !== 'off' && !hasSearchEvidence) {
+    if (!meta.evidenceRetry) {
+      return generateBananaImage(settings, history, opts, signal, {
+        ...meta,
+        evidenceRetry: true,
+      })
+    }
+    throw new Error(
+      'Search was required, but the model returned no search calls or sources after two attempts. The ungrounded image was discarded; try Web search, switch to Nano Banana 2, or provide a reference image.',
+    )
+  }
 
   return {
     ...result,

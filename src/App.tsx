@@ -181,6 +181,23 @@ export default function App() {
     setWorkspace('banana')
   }
 
+  const changeBananaMode = (mode: BananaMode) => {
+    setBananaMode(mode)
+    // Native image-search grounding is only supported by Nano Banana 2.
+    // Keep Pro available for web-only grounding, but never present Pro +
+    // Image Search as a valid combination.
+    if (mode === 'pro' && searchGrounding === 'web-image') {
+      setSearchGrounding('web')
+    }
+  }
+
+  const changeSearchGrounding = (search: SearchGrounding) => {
+    setSearchGrounding(search)
+    if (search === 'web-image' && bananaMode === 'pro') {
+      setBananaMode('thinking')
+    }
+  }
+
   const runBananaGenerate = async (
     history: Turn[],
     assistantId: string,
@@ -470,8 +487,8 @@ export default function App() {
             aspectRatio={aspectRatio}
             imageSize={imageSize}
             onChangeGptMode={setGptMode}
-            onChangeBananaMode={setBananaMode}
-            onChangeSearchGrounding={setSearchGrounding}
+            onChangeBananaMode={changeBananaMode}
+            onChangeSearchGrounding={changeSearchGrounding}
             onChangeAspectRatio={setAspectRatio}
             onChangeImageSize={setImageSize}
             onSend={send}

@@ -52,7 +52,11 @@ const BANANA_MODES: { id: BananaMode; label: string }[] = [
 const SEARCH_OPTIONS: { id: SearchGrounding; label: string; hint: string }[] = [
   { id: 'off', label: 'No search', hint: 'Offline world knowledge only' },
   { id: 'web', label: 'Web', hint: 'Google Search grounding' },
-  { id: 'web-image', label: 'Web + Image', hint: 'Web + Image Search grounding (NB2)' },
+  {
+    id: 'web-image',
+    label: 'Web + Image',
+    hint: 'Verified Web + Image Search · Nano Banana 2 only',
+  },
 ]
 
 export default function Composer({
@@ -129,14 +133,19 @@ export default function Composer({
           <div className="flex flex-wrap items-center gap-2">
             {BANANA_MODES.map((m) => {
               const active = bananaMode === m.id
+              const unavailable = m.id === 'pro' && searchGrounding === 'web-image'
               return (
                 <button
                   key={m.id}
                   type="button"
-                  disabled={disabled}
+                  disabled={disabled || unavailable}
                   onClick={() => onChangeBananaMode(m.id)}
-                  title={bananaModeHint(m.id)}
-                  className={pillClass(active)}
+                  title={
+                    unavailable
+                      ? 'Web + Image Search requires Nano Banana 2 (Fast or Thinking)'
+                      : bananaModeHint(m.id)
+                  }
+                  className={`${pillClass(active)} disabled:cursor-not-allowed disabled:opacity-50`}
                 >
                   {m.label}
                 </button>
