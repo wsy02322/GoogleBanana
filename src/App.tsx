@@ -5,16 +5,19 @@ import type {
   GptImageMode,
   ImageSize,
   SearchGrounding,
+  SessionBucket,
   Settings,
-  SessionsData,
   Turn,
   Workspace,
+  WorkspaceSessions,
 } from './lib/types'
 import {
   loadSettings,
   saveSettings,
-  loadSessions,
-  saveSessions,
+  loadWorkspaceSessions,
+  saveWorkspaceSessions,
+  loadLastWorkspace,
+  saveLastWorkspace,
   createConversation,
   conversationTitle,
 } from './lib/storage'
@@ -67,10 +70,12 @@ const GPT_EXAMPLE_PROMPTS = [
 
 export default function App() {
   const [settings, setSettings] = useState<Settings>(() => loadSettings())
-  const [sessions, setSessions] = useState<SessionsData>(() => loadSessions())
+  const [workspaceSessions, setWorkspaceSessions] = useState<WorkspaceSessions>(() =>
+    loadWorkspaceSessions(),
+  )
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [workspace, setWorkspace] = useState<Workspace>('banana')
+  const [workspace, setWorkspace] = useState<Workspace>(() => loadLastWorkspace())
   const [gptMode, setGptMode] = useState<GptImageMode>('pro-thinking')
   const [bananaMode, setBananaMode] = useState<BananaMode>('thinking')
   const [searchGrounding, setSearchGrounding] = useState<SearchGrounding>('off')
@@ -78,6 +83,8 @@ export default function App() {
   const [imageSize, setImageSize] = useState<ImageSize>('1K')
   const [busy, setBusy] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  const sessions = workspaceSessions[workspace]
 
   const activeConversation = useMemo(() => {
     return (
@@ -88,10 +95,11 @@ export default function App() {
   const turns = useMemo(() => activeConversation?.turns ?? [], [activeConversation])
 
   useEffect(() => applyTheme(settings.theme), [settings.theme])
-  useEffect(() => saveSessions(sessions), [sessions])
+  useEffect(() => saveWorkspaceSessions(workspaceSessions), [workspaceSessions])
+  useEffect(() => saveLastWorkspace(workspace), [workspace])
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [turns, sessions.activeId])
+  }, [turns, sessions.activeId, workspace])
 
   useEffect(() => {
     if (!settings.apiKey.trim()) setShowSettings(true)
@@ -100,9 +108,19 @@ export default function App() {
 
   const hasKey = useMemo(() => settings.apiKey.trim().length > 0, [settings.apiKey])
 
+  const updateWorkspaceBucket = (
+    ws: Workspace,
+    updater: SessionBucket | ((prev: SessionBucket) => SessionBucket),
+  ) => {
+    setWorkspaceSessions((prev) => {
+      const nextBucket = typeof updater === 'function' ? updater(prev[ws]) : updater
+      return { ...prev, [ws]: nextBucket }
+    })
+  }
+
   const updateActiveTurns = (updater: Turn[] | ((prev: Turn[]) => Turn[])) => {
     if (!activeConversation) return
-    setSessions((prev) => ({
+    updateWorkspaceBucket(workspace, (prev) => ({
       ...prev,
       conversations: prev.conversations.map((c) => {
         if (c.id !== prev.activeId) return c
@@ -121,7 +139,7 @@ export default function App() {
 
   const selectConversation = (id: string) => {
     if (busy) return
-    setSessions((prev) => ({ ...prev, activeId: id }))
+    updateWorkspaceBucket(workspace, (prev) => ({ ...prev, activeId: id }))
   }
 
   const newChat = () => {
@@ -130,7 +148,7 @@ export default function App() {
     if (current && current.turns.length === 0) return
 
     const conv = createConversation()
-    setSessions((prev) => ({
+    updateWorkspaceBucket(workspace, (prev) => ({
       activeId: conv.id,
       conversations: [conv, ...prev.conversations],
     }))
@@ -138,7 +156,7 @@ export default function App() {
 
   const deleteConversation = (id: string) => {
     if (busy) return
-    setSessions((prev) => {
+    updateWorkspaceBucket(workspace, (prev) => {
       const remaining = prev.conversations.filter((c) => c.id !== id)
       if (remaining.length === 0) {
         const conv = createConversation()
@@ -248,10 +266,14 @@ export default function App() {
       }
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err)
-      const message =
+      let message =
         err instanceof Error && err.name === 'TimeoutError'
           ? 'Request timed out after 10 minutes. Try Direct mode, or lower size to 1K.'
           : raw
+      if (raw === 'Failed to fetch' || (err instanceof TypeError && /fetch/i.test(raw))) {
+        message =
+          'Connection lost while waiting for the image (common on mobile after ~2 minutes). Update to the latest server build, stay on this page, or retry on Wi‑Fi.'
+      }
       updateActiveTurns((prev) =>
         prev.map((t) => (t.id === assistantTurn.id ? { ...t, pending: false, error: message } : t)),
       )
@@ -316,6 +338,7 @@ export default function App() {
       <Sidebar
         conversations={sessions.conversations}
         activeId={sessions.activeId}
+        workspace={workspace}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         onSelect={selectConversation}

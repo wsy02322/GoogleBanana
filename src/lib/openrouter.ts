@@ -152,7 +152,7 @@ async function parseProxyResponse(res: Response): Promise<unknown> {
   const raw = await res.text()
   let data: unknown
   try {
-    data = raw ? JSON.parse(raw) : {}
+    data = raw ? parsePossiblyPaddedJson(raw) : {}
   } catch {
     throw new Error(`Unexpected response (HTTP ${res.status}): ${raw.slice(0, 300)}`)
   }
@@ -164,7 +164,26 @@ async function parseProxyResponse(res: Response): Promise<unknown> {
     throw new Error(msg)
   }
 
+  const proxiedError = (data as { error?: { message?: string } })?.error?.message
+  if (proxiedError) throw new Error(proxiedError)
+
   return data
+}
+
+/**
+ * OpenRouter may prepend keep-alive whitespace or SSE-style comment lines
+ * before the JSON object. JSON.parse allows whitespace, but not `: ping` lines.
+ */
+function parsePossiblyPaddedJson(raw: string): unknown {
+  const trimmed = raw.trim()
+  if (!trimmed) return {}
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    const start = trimmed.search(/[{[]/)
+    if (start <= 0) throw new Error('Response is not JSON')
+    return JSON.parse(trimmed.slice(start))
+  }
 }
 
 /** Client abort matching the proxy window (PROXY_TIMEOUT_MS, default 10 min). */
@@ -241,6 +260,21 @@ function imagesFromChatCompletion(data: unknown): GenerateResult {
 
   const citations = message ? extractCitations(message) : []
   const searchCalls = payload?.usage?.server_tool_use?.web_search_requests
+
+  // Last resort: some providers embed data-URL images inside markdown/text.
+  if (images.length === 0 && text) {
+    const embedded = text.match(/data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=\s]+/g)
+    if (embedded) {
+      for (const match of embedded) {
+        const cleaned = match.replace(/\s+/g, '')
+        if (!images.includes(cleaned)) images.push(cleaned)
+      }
+      // Prefer showing the image; drop raw base64 blobs from visible text.
+      if (images.length > 0) {
+        text = text.replace(/data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=\s]+/g, '').trim()
+      }
+    }
+  }
 
   if (images.length === 0 && !text) {
     throw new Error('The model returned no image. Try a different prompt or model.')
