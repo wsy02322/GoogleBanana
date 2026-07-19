@@ -50,7 +50,7 @@ docker compose up -d --build
 
 By default the container listens on `127.0.0.1:8787`. Put Nginx or Caddy in
 front for HTTPS. Set `proxy_read_timeout` (Nginx) or equivalent to at least
-**300s** — image generation can take 20+ seconds.
+**600s** — GPT Pro Thinking image generation can take several minutes.
 
 Health check: `GET /healthz` → `{"ok":true}`.
 
@@ -72,7 +72,7 @@ location / {
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
-    proxy_read_timeout 300s;
+    proxy_read_timeout 600s;
     client_max_body_size 50m;
 }
 ```

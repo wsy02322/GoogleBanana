@@ -80,6 +80,8 @@ export interface Turn {
   error?: string
   /** Banana intelligence metadata (assistant turns) */
   bananaMode?: BananaMode
+  /** GPT Image studio mode (assistant turns) */
+  gptMode?: GptImageMode
   searchGrounding?: SearchGrounding
   reasoning?: string
   citations?: Citation[]

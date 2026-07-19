@@ -10,7 +10,6 @@
 // via the Authorization header sent by the browser (kept in localStorage).
 
 import express from 'express'
-import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -78,9 +77,14 @@ app.post('/proxy', async (req, res) => {
 
   // Guard against indefinitely hanging upstream requests. Image generation can
   // take a while, so allow a generous window.
-  const timeoutMs = Number(process.env.PROXY_TIMEOUT_MS) || 300000
+  const timeoutMs = Number(process.env.PROXY_TIMEOUT_MS) || 600000
 
   try {
+    // Buffer the full upstream body instead of piping. GPT image models can
+    // think for minutes and OpenRouter may send keep-alive padding first; an
+    // unhandled mid-stream abort on .pipe(res) can leave the browser hung on
+    // "Generating image…" forever. Awaiting the body keeps AbortSignal.timeout
+    // covering headers + body and always yields a finished HTTP response.
     const upstream = await fetch(target, {
       method: 'POST',
       headers,
@@ -88,23 +92,23 @@ app.post('/proxy', async (req, res) => {
       signal: AbortSignal.timeout(timeoutMs),
     })
 
+    const buf = Buffer.from(await upstream.arrayBuffer())
     res.status(upstream.status)
     const contentType = upstream.headers.get('content-type')
     if (contentType) res.set('content-type', contentType)
-
-    if (upstream.body) {
-      Readable.fromWeb(upstream.body).pipe(res)
-    } else {
-      res.end()
-    }
+    res.send(buf)
   } catch (err) {
     if (res.headersSent) {
-      res.end()
+      try {
+        res.end()
+      } catch {
+        // ignore double-end
+      }
       return
     }
     const message =
-      err?.name === 'TimeoutError'
-        ? `Upstream request timed out after ${timeoutMs}ms.`
+      err?.name === 'TimeoutError' || err?.cause?.name === 'TimeoutError'
+        ? `Upstream request timed out after ${timeoutMs}ms. GPT Pro Thinking can take several minutes — try Direct mode or a smaller size (1K), or raise PROXY_TIMEOUT_MS.`
         : `Upstream request failed: ${err?.message || String(err)}`
     res.status(502).json({ error: { message } })
   }

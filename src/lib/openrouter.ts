@@ -167,6 +167,11 @@ async function parseProxyResponse(res: Response): Promise<unknown> {
   return data
 }
 
+/** Client abort matching the proxy window (PROXY_TIMEOUT_MS, default 10 min). */
+export function generationAbortSignal(timeoutMs = 600_000): AbortSignal {
+  return AbortSignal.timeout(timeoutMs)
+}
+
 function extractCitations(message: {
   annotations?: Array<{
     type?: string
@@ -207,18 +212,26 @@ function imagesFromChatCompletion(data: unknown): GenerateResult {
   const choice = payload?.choices?.[0]
 
   const message = choice?.message
-  const images = (message?.images ?? [])
-    .map((img) => img?.image_url?.url)
-    .filter((u): u is string => typeof u === 'string' && u.length > 0)
+  const images: string[] = []
+  for (const img of message?.images ?? []) {
+    const url = img?.image_url?.url
+    if (typeof url === 'string' && url.length > 0) images.push(url)
+  }
 
   let text = ''
   if (typeof message?.content === 'string') {
     text = message.content
   } else if (Array.isArray(message?.content)) {
-    text = message.content
-      .filter((p) => p.type === 'text' && p.text)
-      .map((p) => p.text!)
-      .join('\n')
+    const textParts: string[] = []
+    for (const part of message.content) {
+      if (part.type === 'text' && part.text) textParts.push(part.text)
+      // Some providers put generated images in content[] instead of message.images.
+      const url = part.type === 'image_url' ? part.image_url?.url : undefined
+      if (typeof url === 'string' && url.length > 0 && !images.includes(url)) {
+        images.push(url)
+      }
+    }
+    text = textParts.join('\n')
   }
 
   const reasoning =
@@ -368,6 +381,7 @@ async function generateBananaImage(
     model,
     messages,
     modalities: ['image', 'text'],
+    stream: false,
     reasoning: { effort, exclude: false },
     reasoning_effort: effort,
     image_config: {
@@ -444,6 +458,7 @@ async function generateProThinking(
     model: GPT_PRO_THINKING_MODEL,
     messages: buildMessages(history),
     modalities: ['image', 'text'],
+    stream: false,
     // OpenRouter accepts both shapes; include both for max compatibility.
     reasoning: { effort: 'high' },
     reasoning_effort: 'high',

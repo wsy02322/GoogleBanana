@@ -26,11 +26,13 @@ There is one runnable unit, started together by `npm run dev`:
   restart the dev process.
 - Do **not** add a per-request `req.on('close', () => controller.abort())` abort
   in the proxy: with Express it aborts the upstream `fetch` prematurely and the
-  response hangs. The proxy instead uses `AbortSignal.timeout` (`PROXY_TIMEOUT_MS`,
-  default 300000ms) and always returns an error rather than hanging.
+  response hangs. The proxy instead uses `AbortSignal.timeout`
+  (`PROXY_TIMEOUT_MS`, default 600000ms), buffers the full upstream body, and
+  always returns an error rather than hanging.
 - Real image generation requires a valid OpenRouter key. `google/gemini-3-pro-image`
-  is the default (~20s per image); `google/gemini-3.1-flash-image` is faster (~7s).
-  Provide the key at runtime in the in-app Settings (stored in `localStorage`) —
-  it is not read from an env var.
+  is the default Banana model (~20s per image); `google/gemini-3.1-flash-image` is
+  faster (~7s). GPT **Pro Thinking** (`openai/gpt-5.4-image-2` + high reasoning)
+  can take several minutes. Provide the key at runtime in the in-app Settings
+  (stored in `localStorage`) — it is not read from an env var.
 - OpenRouter prepends whitespace/keep-alive padding before the JSON body; the
   client reads the full body as text before parsing, so this is handled.
