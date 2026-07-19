@@ -58,16 +58,30 @@ export function bananaModeHint(mode: BananaMode): string {
 }
 
 export function imageSizeCostHint(size: ImageSize): string {
-  if (size === '1K') return '1K · lowest cost'
-  if (size === '2K') return '2K · higher cost'
-  return '4K · highest cost'
+  if (size === '1K') return '1K · ~1× cost · standard detail'
+  if (size === '2K') return '2K · ~2–4× cost · sharper'
+  return '4K · ~4–10× cost · max detail'
 }
 
 export function imageQualityCostHint(quality: ImageQuality): string {
-  if (quality === 'auto') return 'auto · provider picks'
-  if (quality === 'low') return 'low · lowest cost'
-  if (quality === 'medium') return 'medium · mid cost'
-  return 'high · highest cost'
+  if (quality === 'auto') return 'auto · provider picks · mid cost'
+  if (quality === 'low') return 'low · ~1× cost · draft quality'
+  if (quality === 'medium') return 'medium · ~2× cost · good quality'
+  return 'high · ~4× cost · best quality'
+}
+
+/** Footer copy explaining cost/quality knobs for the active workspace. */
+export function composerCostFootnote(
+  workspace: 'banana' | 'gpt',
+  gptMode: 'pro-thinking' | 'direct',
+): string {
+  if (workspace === 'banana') {
+    return 'Banana has no separate quality knob — resolution is the main cost/detail control (1K ~1×, 2K ~2–4×, 4K ~4–10×; rough). Enter to send.'
+  }
+  if (gptMode === 'direct') {
+    return 'Direct: resolution (1K→4K ~1×→4–10×) and quality (low→high ~1×→4×) both raise cost and detail — rough OpenRouter/OpenAI scales. Enter to send.'
+  }
+  return 'Pro Thinking: resolution still affects image size cost (~1×/2–4×/4–10×). Most spend is usually reasoning tokens, not the quality enum (Direct-only). Enter to send.'
 }
 
 function bananaReasoningEffort(mode: BananaMode): 'minimal' | 'high' {

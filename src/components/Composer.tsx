@@ -9,6 +9,7 @@ import type {
 } from '../lib/types'
 import {
   bananaModeHint,
+  composerCostFootnote,
   imageQualityCostHint,
   imageSizeCostHint,
 } from '../lib/openrouter'
@@ -206,14 +207,14 @@ export default function Composer({
             value={imageSize}
             options={IMAGE_SIZES.map((o) => ({ value: o, label: imageSizeCostHint(o) }))}
             onChange={(v) => onChangeImageSize(v as ImageSize)}
-            title="Resolution — higher sizes cost more"
+            title="Resolution — 1K ~1×, 2K ~2–4×, 4K ~4–10× cost vs 1K (rough); higher = more detail"
           />
           {showGptQuality && (
             <SelectPill
               value={imageQuality}
               options={IMAGE_QUALITIES.map((o) => ({ value: o, label: imageQualityCostHint(o) }))}
               onChange={(v) => onChangeImageQuality(v as ImageQuality)}
-              title="Quality — GPT Direct only; higher quality costs more"
+              title="Quality (GPT Direct only) — low ~1×, medium ~2×, high ~4× cost (rough); higher = better fidelity"
             />
           )}
 
@@ -229,12 +230,8 @@ export default function Composer({
           </button>
         </div>
       </div>
-      <p className="mt-2 text-center text-xs text-gray-400 dark:text-gray-500">
-        {workspace === 'banana'
-          ? 'Resolution drives Banana cost (1K cheapest → 4K most expensive). Enter to send.'
-          : showGptQuality
-            ? 'Resolution + quality both affect Direct cost. Enter to send.'
-            : 'Resolution affects image size cost; Pro Thinking is mostly billed on reasoning tokens. Enter to send.'}
+      <p className="mt-2 text-center text-xs leading-snug text-gray-400 dark:text-gray-500">
+        {composerCostFootnote(workspace, gptMode)}
       </p>
     </div>
   )
