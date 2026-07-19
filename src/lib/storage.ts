@@ -1,14 +1,47 @@
-import type { Conversation, SessionsData, Settings, Turn } from './types'
+import type {
+  Conversation,
+  IntelligenceLevel,
+  ModelOption,
+  SessionsData,
+  Settings,
+  Turn,
+  UiMode,
+} from './types'
 
 const SETTINGS_KEY = 'googlebanana.settings.v1'
 const SESSIONS_KEY = 'googlebanana.sessions.v1'
 const LEGACY_HISTORY_KEY = 'googlebanana.history.v1'
 
 export const DEFAULT_MODEL = 'google/gemini-3-pro-image'
+export const DEFAULT_CHATGPT_MODEL = 'openai/gpt-5.4-image-2'
 
-export const MODEL_OPTIONS = [
+export const GEMINI_MODEL_OPTIONS: ModelOption[] = [
   { id: 'google/gemini-3-pro-image', label: 'Gemini 3 Pro Image (nano banana)' },
   { id: 'google/gemini-3.1-flash-image', label: 'Gemini 3.1 Flash Image' },
+]
+
+export const CHATGPT_MODEL_OPTIONS: ModelOption[] = [
+  { id: 'openai/gpt-5.4-image-2', label: 'GPT-5.4 Image 2' },
+  { id: 'openai/gpt-image-2', label: 'GPT Image 2' },
+]
+
+/** @deprecated Prefer GEMINI_MODEL_OPTIONS or modelOptionsForMode() */
+export const MODEL_OPTIONS = GEMINI_MODEL_OPTIONS
+
+export const MODEL_OPTIONS_BY_MODE: Record<UiMode, ModelOption[]> = {
+  gemini: GEMINI_MODEL_OPTIONS,
+  chatgpt: CHATGPT_MODEL_OPTIONS,
+}
+
+export const DEFAULT_MODEL_BY_MODE: Record<UiMode, string> = {
+  gemini: DEFAULT_MODEL,
+  chatgpt: DEFAULT_CHATGPT_MODEL,
+}
+
+export const INTELLIGENCE_OPTIONS: { id: IntelligenceLevel; label: string; hint: string }[] = [
+  { id: 'low', label: 'Low', hint: 'Faster, draft quality' },
+  { id: 'medium', label: 'Medium', hint: 'Balanced quality & speed' },
+  { id: 'high', label: 'High', hint: 'Best quality, slower' },
 ]
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -17,6 +50,21 @@ export const DEFAULT_SETTINGS: Settings = {
   model: DEFAULT_MODEL,
   siteTitle: 'GoogleBanana',
   theme: 'system',
+  uiMode: 'gemini',
+  intelligence: 'medium',
+}
+
+export function modelOptionsForMode(mode: UiMode): ModelOption[] {
+  return MODEL_OPTIONS_BY_MODE[mode]
+}
+
+export function isModelForMode(model: string, mode: UiMode): boolean {
+  return MODEL_OPTIONS_BY_MODE[mode].some((m) => m.id === model)
+}
+
+export function resolveModelForMode(model: string, mode: UiMode): string {
+  if (isModelForMode(model, mode)) return model
+  return DEFAULT_MODEL_BY_MODE[mode]
 }
 
 function uid(): string {
@@ -94,7 +142,9 @@ export function loadSettings(): Settings {
     const raw = localStorage.getItem(SETTINGS_KEY)
     if (!raw) return { ...DEFAULT_SETTINGS }
     const parsed = JSON.parse(raw) as Partial<Settings>
-    return { ...DEFAULT_SETTINGS, ...parsed }
+    const merged = { ...DEFAULT_SETTINGS, ...parsed }
+    merged.model = resolveModelForMode(merged.model, merged.uiMode)
+    return merged
   } catch {
     return { ...DEFAULT_SETTINGS }
   }

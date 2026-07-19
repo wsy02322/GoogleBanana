@@ -36,6 +36,8 @@ function sanitizeBaseUrl(raw) {
   return url.toString().replace(/\/+$/, '')
 }
 
+const ALLOWED_PROXY_PATHS = new Set(['chat/completions', 'images'])
+
 app.post('/proxy', async (req, res) => {
   const baseUrl = sanitizeBaseUrl(req.get('x-or-base-url'))
   const auth = req.get('authorization')
@@ -47,7 +49,16 @@ app.post('/proxy', async (req, res) => {
     return res.status(401).json({ error: { message: 'Missing Authorization header. Set your API key in Settings.' } })
   }
 
-  const target = `${baseUrl}/chat/completions`
+  // Optional path override for OpenRouter Image API (`/images`) vs chat completions.
+  // Defaults to chat/completions for backward compatibility.
+  const rawPath = (req.get('x-or-path') || 'chat/completions').trim().replace(/^\/+/, '')
+  if (!ALLOWED_PROXY_PATHS.has(rawPath)) {
+    return res.status(400).json({
+      error: { message: `Invalid X-OR-Path "${rawPath}". Allowed: chat/completions, images.` },
+    })
+  }
+
+  const target = `${baseUrl}/${rawPath}`
   const headers = {
     'Content-Type': 'application/json',
     Authorization: auth,

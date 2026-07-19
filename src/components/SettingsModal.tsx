@@ -1,6 +1,11 @@
 import { useState } from 'react'
-import type { Settings } from '../lib/types'
-import { MODEL_OPTIONS, DEFAULT_SETTINGS } from '../lib/storage'
+import type { Settings, UiMode } from '../lib/types'
+import {
+  DEFAULT_SETTINGS,
+  INTELLIGENCE_OPTIONS,
+  modelOptionsForMode,
+  resolveModelForMode,
+} from '../lib/storage'
 import { CloseIcon } from './icons'
 
 interface Props {
@@ -16,7 +21,16 @@ export default function SettingsModal({ settings, onSave, onClose }: Props) {
   const update = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setDraft((d) => ({ ...d, [key]: value }))
 
-  const modelIsCustom = !MODEL_OPTIONS.some((m) => m.id === draft.model)
+  const modeOptions = modelOptionsForMode(draft.uiMode)
+  const modelIsCustom = !modeOptions.some((m) => m.id === draft.model)
+
+  const setMode = (mode: UiMode) => {
+    setDraft((d) => ({
+      ...d,
+      uiMode: mode,
+      model: resolveModelForMode(d.model, mode),
+    }))
+  }
 
   return (
     <div
@@ -68,6 +82,30 @@ export default function SettingsModal({ settings, onSave, onClose }: Props) {
             />
           </Field>
 
+          <Field label="UI Mode">
+            <div className="flex gap-2">
+              {(
+                [
+                  { id: 'gemini', label: 'Gemini (nano banana)' },
+                  { id: 'chatgpt', label: 'ChatGPT Image' },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setMode(opt.id)}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                    draft.uiMode === opt.id
+                      ? 'border-gray-900 bg-gray-900 text-white dark:border-banana-400 dark:bg-banana-400 dark:text-gray-900'
+                      : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </Field>
+
           <Field label="Model">
             <select
               value={modelIsCustom ? '__custom__' : draft.model}
@@ -77,7 +115,7 @@ export default function SettingsModal({ settings, onSave, onClose }: Props) {
               }}
               className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-banana-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
             >
-              {MODEL_OPTIONS.map((m) => (
+              {modeOptions.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.label}
                 </option>
@@ -94,6 +132,31 @@ export default function SettingsModal({ settings, onSave, onClose }: Props) {
               />
             )}
           </Field>
+
+          {draft.uiMode === 'chatgpt' && (
+            <Field
+              label="Intelligence"
+              hint="Controls image quality (and reasoning effort for GPT-5.4 Image 2)."
+            >
+              <div className="flex gap-2">
+                {INTELLIGENCE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    title={opt.hint}
+                    onClick={() => update('intelligence', opt.id)}
+                    className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                      draft.intelligence === opt.id
+                        ? 'border-chatgpt-accent bg-chatgpt-accent text-white'
+                        : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </Field>
+          )}
         </div>
 
         <div className="mt-6 flex justify-end gap-2">
