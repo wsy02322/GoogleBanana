@@ -137,3 +137,7 @@ Banana and GPT Image keep **separate chat histories** in the sidebar. Switching
 workspaces only changes which chat list is shown. Settings (API key, base URL,
 theme) are shared. Each workspace remembers its own aspect ratio, resolution,
 and quality controls.
+
+Chat text and images are stored in the browser with **IndexedDB** when available
+(images as Blobs). If IndexedDB is unavailable, the app falls back to limited
+`localStorage` and may trim older images. Download any image you want to keep.

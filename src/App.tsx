@@ -16,7 +16,9 @@ import {
   loadSettings,
   saveSettings,
   loadWorkspaceSessions,
-  saveWorkspaceSessions,
+  loadWorkspaceSessionsAsync,
+  saveWorkspaceSessionsAsync,
+  emptyWorkspaceSessions,
   loadLastWorkspace,
   saveLastWorkspace,
   loadWorkspaceImagePreferences,
@@ -73,6 +75,7 @@ export default function App() {
   const [workspaceSessions, setWorkspaceSessions] = useState<WorkspaceSessions>(() =>
     loadWorkspaceSessions(),
   )
+  const [sessionsReady, setSessionsReady] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [workspace, setWorkspace] = useState<Workspace>(() => loadLastWorkspace())
@@ -104,20 +107,49 @@ export default function App() {
   const turns = useMemo(() => activeConversation?.turns ?? [], [activeConversation])
 
   useEffect(() => applyTheme(settings.theme), [settings.theme])
+
   useEffect(() => {
-    const result = saveWorkspaceSessions(workspaceSessions)
-    if (result.status === 'trimmed') {
-      setStorageWarning(
-        `${result.trimmedImages} older embedded image${result.trimmedImages === 1 ? ' was' : 's were'} removed from saved browser history to fit storage. Chat text is preserved.`,
-      )
-    } else if (result.status === 'failed') {
-      setStorageWarning(
-        'Browser storage is full. New chat history may not survive a reload; download important images now.',
-      )
-    } else {
-      setStorageWarning(undefined)
+    let cancelled = false
+    ;(async () => {
+      try {
+        const result = await loadWorkspaceSessionsAsync()
+        if (cancelled) return
+        setWorkspaceSessions(result.sessions)
+        if (result.warning) setStorageWarning(result.warning)
+      } catch {
+        if (cancelled) return
+        setWorkspaceSessions(emptyWorkspaceSessions())
+        setStorageWarning(
+          'Could not restore chat history from browser storage. Download important images going forward.',
+        )
+      } finally {
+        if (!cancelled) setSessionsReady(true)
+      }
+    })()
+    return () => {
+      cancelled = true
     }
-  }, [workspaceSessions])
+  }, [])
+
+  useEffect(() => {
+    if (!sessionsReady) return
+    let cancelled = false
+    ;(async () => {
+      const result = await saveWorkspaceSessionsAsync(workspaceSessions)
+      if (cancelled) return
+      if (result.warning) {
+        setStorageWarning(result.warning)
+      } else if (result.status === 'saved') {
+        setStorageWarning((prev) =>
+          prev && /Migrated chat history to IndexedDB/i.test(prev) ? prev : undefined,
+        )
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceSessions, sessionsReady])
+
   useEffect(() => saveLastWorkspace(workspace), [workspace])
   useEffect(() => saveWorkspaceImagePreferences(imagePreferences), [imagePreferences])
   useEffect(() => {
@@ -237,7 +269,7 @@ export default function App() {
   }
 
   const send = async (text: string, images: string[]) => {
-    if (busy || !activeConversation) return
+    if (!sessionsReady || busy || !activeConversation) return
     const jobWorkspace = workspace
     const jobConversationId = activeConversation.id
     const jobPreferences = imagePreferences[jobWorkspace]
@@ -312,7 +344,7 @@ export default function App() {
   }
 
   const redoWithPro = async (assistantTurn: Turn) => {
-    if (busy || workspace !== 'banana' || !activeConversation) return
+    if (!sessionsReady || busy || workspace !== 'banana' || !activeConversation) return
     const jobWorkspace = workspace
     const jobConversationId = activeConversation.id
     const idx = turns.findIndex((t) => t.id === assistantTurn.id)
@@ -469,7 +501,12 @@ export default function App() {
         </header>
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
-          {isEmpty ? (
+          {!sessionsReady ? (
+            <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center px-4 text-center">
+              <div className="mb-4 text-6xl">{workspace === 'gpt' ? '✨' : '🍌'}</div>
+              <p className="text-gray-500 dark:text-gray-400">Restoring chat history…</p>
+            </div>
+          ) : isEmpty ? (
             <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center px-4 text-center">
               <div className="mb-4 text-6xl">{workspace === 'gpt' ? '✨' : '🍌'}</div>
               <h2 className="mb-2 text-2xl font-semibold">
@@ -488,7 +525,7 @@ export default function App() {
                 {emptyPrompts.map((p) => (
                   <button
                     key={p}
-                    disabled={!hasKey || busy}
+                    disabled={!hasKey || busy || !sessionsReady}
                     onClick={() => send(p, [])}
                     className="rounded-xl border border-gray-200 p-3 text-left text-sm text-gray-700 transition hover:border-banana-400 hover:bg-banana-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-800 dark:text-gray-300 dark:hover:border-banana-400 dark:hover:bg-gray-900"
                   >
@@ -513,7 +550,7 @@ export default function App() {
 
         <div className="border-t border-gray-100 px-4 py-4 dark:border-gray-800">
           <Composer
-            disabled={!hasKey || busy}
+            disabled={!hasKey || busy || !sessionsReady}
             storageWarning={storageWarning}
             workspace={workspace}
             gptMode={gptMode}

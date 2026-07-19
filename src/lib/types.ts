@@ -44,7 +44,8 @@ export interface Turn {
   id: string
   role: 'user' | 'assistant'
   text: string
-  images: string[] // data URLs
+  /** Runtime image URLs (usually data URLs). Persisted as IndexedDB Blobs when possible. */
+  images: string[]
   createdAt: number
   pending?: boolean
   error?: string

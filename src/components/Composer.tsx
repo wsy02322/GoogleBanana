@@ -236,7 +236,7 @@ export default function Composer({
         {composerCostFootnote(workspace, gptMode)}
       </p>
       <p className="mt-1 text-center text-xs leading-snug text-gray-400 dark:text-gray-500">
-        Download images you want to keep. Browser chat history is best-effort.
+        Download images you want to keep. Chat history uses IndexedDB when available.
       </p>
       {storageWarning && (
         <p className="mt-1 text-center text-xs font-medium leading-snug text-amber-700 dark:text-amber-300">
