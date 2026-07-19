@@ -186,6 +186,7 @@ export default function App() {
               citations: result.citations,
               bananaMode: result.bananaMode ?? mode,
               searchGrounding: result.searchGrounding ?? search,
+              capability: result.capability,
             }
           : t,
       ),

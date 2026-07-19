@@ -1,6 +1,7 @@
 import type {
   AspectRatio,
   BananaMode,
+  CapabilityReport,
   Citation,
   GptImageMode,
   ImageSize,
@@ -35,6 +36,9 @@ export interface GenerateResult {
   modelUsed?: string
   bananaMode?: BananaMode
   searchGrounding?: SearchGrounding
+  capability?: CapabilityReport
+  /** Internal: search calls reported by OpenRouter usage */
+  searchCalls?: number
 }
 
 export const GPT_PRO_THINKING_MODEL = 'openai/gpt-5.4-image-2'
@@ -61,6 +65,37 @@ export function bananaModeHint(mode: BananaMode): string {
 
 function bananaReasoningEffort(mode: BananaMode): 'minimal' | 'high' {
   return mode === 'fast' ? 'minimal' : 'high'
+}
+
+export function buildCapabilityReport(input: {
+  mode: BananaMode
+  model: string
+  searchRequested: SearchGrounding
+  searchUsed: SearchGrounding
+  searchFallback?: boolean
+  reasoning?: string
+  citationCount: number
+  searchCalls?: number
+  imageOk: boolean
+}): CapabilityReport {
+  let thinking: CapabilityReport['thinking']
+  if (input.mode === 'fast') {
+    thinking = input.reasoning ? 'returned' : 'minimal'
+  } else {
+    thinking = input.reasoning ? 'returned' : 'not_returned'
+  }
+
+  return {
+    mode: input.mode,
+    model: input.model,
+    thinking,
+    searchRequested: input.searchRequested,
+    searchUsed: input.searchUsed,
+    searchFallback: input.searchFallback,
+    citationCount: input.citationCount,
+    searchCalls: input.searchCalls,
+    imageOk: input.imageOk,
+  }
 }
 
 function turnToMessage(turn: Turn): ChatMessage {
@@ -134,7 +169,7 @@ function extractCitations(message: {
 }
 
 function imagesFromChatCompletion(data: unknown): GenerateResult {
-  const choice = (data as {
+  const payload = data as {
     choices?: Array<{
       message?: {
         content?: string | ContentPart[]
@@ -147,7 +182,12 @@ function imagesFromChatCompletion(data: unknown): GenerateResult {
         }>
       }
     }>
-  })?.choices?.[0]
+    usage?: {
+      server_tool_use?: { web_search_requests?: number }
+    }
+  }
+
+  const choice = payload?.choices?.[0]
 
   const message = choice?.message
   const images = (message?.images ?? [])
@@ -170,6 +210,7 @@ function imagesFromChatCompletion(data: unknown): GenerateResult {
       : undefined
 
   const citations = message ? extractCitations(message) : []
+  const searchCalls = payload?.usage?.server_tool_use?.web_search_requests
 
   if (images.length === 0 && !text) {
     throw new Error('The model returned no image. Try a different prompt or model.')
@@ -180,6 +221,7 @@ function imagesFromChatCompletion(data: unknown): GenerateResult {
     images,
     reasoning,
     citations: citations.length > 0 ? citations : undefined,
+    searchCalls: typeof searchCalls === 'number' ? searchCalls : undefined,
   }
 }
 
@@ -281,6 +323,19 @@ export async function generateImage(
   opts: GenerateOptions,
   signal?: AbortSignal,
 ): Promise<GenerateResult> {
+  return generateBananaImage(settings, history, opts, signal, {
+    searchRequested: opts.searchGrounding ?? 'off',
+    searchFallback: false,
+  })
+}
+
+async function generateBananaImage(
+  settings: Settings,
+  history: Turn[],
+  opts: GenerateOptions,
+  signal: AbortSignal | undefined,
+  meta: { searchRequested: SearchGrounding; searchFallback: boolean },
+): Promise<GenerateResult> {
   if (!settings.apiKey.trim()) {
     throw new Error('No API key set. Open Settings and paste your OpenRouter API key.')
   }
@@ -324,11 +379,12 @@ export async function generateImage(
     }
     const looksLikeToolError = /tool|google_search|search_types|unsupported/i.test(msg)
     if (looksLikeToolError) {
-      return generateImage(
+      return generateBananaImage(
         settings,
         history,
         { ...opts, searchGrounding: 'web' },
         signal,
+        { searchRequested: meta.searchRequested, searchFallback: true },
       )
     }
     throw new Error(msg)
@@ -336,11 +392,24 @@ export async function generateImage(
 
   const data = await parseProxyResponse(res)
   const result = imagesFromChatCompletion(data)
+  const citationCount = result.citations?.length ?? 0
+
   return {
     ...result,
     modelUsed: model,
     bananaMode,
     searchGrounding,
+    capability: buildCapabilityReport({
+      mode: bananaMode,
+      model,
+      searchRequested: meta.searchRequested,
+      searchUsed: searchGrounding,
+      searchFallback: meta.searchFallback || undefined,
+      reasoning: result.reasoning,
+      citationCount,
+      searchCalls: result.searchCalls,
+      imageOk: result.images.length > 0,
+    }),
   }
 }
 

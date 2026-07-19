@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Turn } from '../lib/types'
+import type { CapabilityReport, Turn } from '../lib/types'
 import { bananaModeLabel } from '../lib/openrouter'
 import { downloadDataUrl } from '../lib/image'
 import { DownloadIcon, RefreshIcon, ChevronIcon } from './icons'
@@ -8,6 +8,134 @@ interface Props {
   turn: Turn
   busy?: boolean
   onRedoWithPro?: (turn: Turn) => void
+}
+
+type ChipTone = 'ok' | 'warn' | 'muted' | 'info'
+
+function chipClass(tone: ChipTone): string {
+  if (tone === 'ok') {
+    return 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
+  }
+  if (tone === 'warn') {
+    return 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300'
+  }
+  if (tone === 'info') {
+    return 'border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300'
+  }
+  return 'border-gray-200 bg-gray-50 text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400'
+}
+
+function CapabilityChips({ report }: { report: CapabilityReport }) {
+  const chips: { key: string; label: string; tone: ChipTone; title: string }[] = []
+
+  chips.push({
+    key: 'image',
+    label: report.imageOk ? 'Image ✓' : 'No image',
+    tone: report.imageOk ? 'ok' : 'warn',
+    title: report.imageOk ? 'Image payload returned' : 'No image in response',
+  })
+
+  chips.push({
+    key: 'mode',
+    label: bananaModeLabel(report.mode),
+    tone: 'info',
+    title: report.model,
+  })
+
+  if (report.thinking === 'returned') {
+    chips.push({
+      key: 'think',
+      label: 'Thinking ✓',
+      tone: 'ok',
+      title: 'Visible reasoning text returned',
+    })
+  } else if (report.thinking === 'not_returned') {
+    chips.push({
+      key: 'think',
+      label: 'Thinking · no text',
+      tone: 'warn',
+      title:
+        'High thinking was requested, but the upstream response had no reasoning field. The model may still have thought server-side.',
+    })
+  } else {
+    chips.push({
+      key: 'think',
+      label: 'Thinking · minimal',
+      tone: 'muted',
+      title: 'Fast mode uses minimal thinking',
+    })
+  }
+
+  if (report.searchRequested === 'off') {
+    chips.push({
+      key: 'search',
+      label: 'Search off',
+      tone: 'muted',
+      title: 'No search grounding requested',
+    })
+  } else if (report.searchFallback) {
+    chips.push({
+      key: 'search',
+      label: 'Image search → Web',
+      tone: 'warn',
+      title:
+        'Web + Image Search was requested, but the native image-search tool was rejected. Fell back to web search.',
+    })
+  } else if (report.searchUsed === 'web-image') {
+    chips.push({
+      key: 'search',
+      label:
+        report.citationCount > 0
+          ? `Web+Image ✓ · ${report.citationCount}`
+          : 'Web+Image · no cites',
+      tone: report.citationCount > 0 ? 'ok' : 'warn',
+      title:
+        report.citationCount > 0
+          ? `${report.citationCount} citation(s) returned`
+          : 'Web + Image Search was enabled, but no url_citation annotations came back',
+    })
+  } else {
+    // web
+    const calls =
+      typeof report.searchCalls === 'number' ? ` · ${report.searchCalls} call${report.searchCalls === 1 ? '' : 's'}` : ''
+    if (report.citationCount > 0) {
+      chips.push({
+        key: 'search',
+        label: `Web ✓ · ${report.citationCount}${calls}`,
+        tone: 'ok',
+        title: `${report.citationCount} citation(s)${typeof report.searchCalls === 'number' ? `, ${report.searchCalls} search call(s)` : ''}`,
+      })
+    } else if (typeof report.searchCalls === 'number' && report.searchCalls > 0) {
+      chips.push({
+        key: 'search',
+        label: `Web used · no cites${calls}`,
+        tone: 'warn',
+        title: `Model made ${report.searchCalls} search call(s), but no url_citation annotations were returned`,
+      })
+    } else {
+      chips.push({
+        key: 'search',
+        label: 'Web · no evidence',
+        tone: 'warn',
+        title:
+          'Web search was enabled, but neither citations nor search-call usage were reported. The model may have skipped searching.',
+      })
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1.5" aria-label="Capability check">
+      {chips.map((c) => (
+        <span
+          key={c.key}
+          title={c.title}
+          className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${chipClass(c.tone)}`}
+        >
+          {c.label}
+        </span>
+      ))}
+    </div>
+  )
 }
 
 export default function Message({ turn, busy, onRedoWithPro }: Props) {
@@ -57,6 +185,10 @@ export default function Message({ turn, busy, onRedoWithPro }: Props) {
           <div className="rounded-2xl border border-red-300 bg-red-50 px-4 py-2.5 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
             {turn.error}
           </div>
+        )}
+
+        {!isUser && !turn.pending && !turn.error && turn.capability && (
+          <CapabilityChips report={turn.capability} />
         )}
 
         {!isUser && !turn.pending && (turn.reasoning || (turn.citations && turn.citations.length > 0)) && (
