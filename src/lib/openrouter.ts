@@ -2,6 +2,7 @@ import type {
   AspectRatio,
   BananaMode,
   GptImageMode,
+  ImageQuality,
   ImageSize,
   Settings,
   Turn,
@@ -21,6 +22,8 @@ interface ChatMessage {
 export interface GenerateOptions {
   aspectRatio: AspectRatio
   imageSize: ImageSize
+  /** GPT Direct Images API only; ignored by Banana / Pro Thinking. */
+  imageQuality?: ImageQuality
   bananaMode?: BananaMode
 }
 
@@ -52,6 +55,19 @@ export function bananaModeHint(mode: BananaMode): string {
   if (mode === 'fast') return 'Nano Banana 2 · minimal thinking'
   if (mode === 'thinking') return 'Nano Banana 2 · high thinking'
   return 'Nano Banana Pro · highest fidelity'
+}
+
+export function imageSizeCostHint(size: ImageSize): string {
+  if (size === '1K') return '1K · lowest cost'
+  if (size === '2K') return '2K · higher cost'
+  return '4K · highest cost'
+}
+
+export function imageQualityCostHint(quality: ImageQuality): string {
+  if (quality === 'auto') return 'auto · provider picks'
+  if (quality === 'low') return 'low · lowest cost'
+  if (quality === 'medium') return 'medium · mid cost'
+  return 'high · highest cost'
 }
 
 function bananaReasoningEffort(mode: BananaMode): 'minimal' | 'high' {
@@ -356,7 +372,7 @@ async function generateDirectGptImage2(
   const body: Record<string, unknown> = {
     model: GPT_DIRECT_MODEL,
     prompt: latestUserPrompt(history),
-    quality: 'high',
+    quality: opts.imageQuality ?? 'high',
     aspect_ratio: opts.aspectRatio,
     resolution: opts.imageSize,
     n: 1,

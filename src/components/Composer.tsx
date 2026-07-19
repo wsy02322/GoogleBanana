@@ -3,10 +3,15 @@ import type {
   AspectRatio,
   BananaMode,
   GptImageMode,
+  ImageQuality,
   ImageSize,
   Workspace,
 } from '../lib/types'
-import { bananaModeHint } from '../lib/openrouter'
+import {
+  bananaModeHint,
+  imageQualityCostHint,
+  imageSizeCostHint,
+} from '../lib/openrouter'
 import { fileToDataUrl } from '../lib/image'
 import { ImageIcon, SendIcon, CloseIcon } from './icons'
 
@@ -17,15 +22,18 @@ interface Props {
   bananaMode: BananaMode
   aspectRatio: AspectRatio
   imageSize: ImageSize
+  imageQuality: ImageQuality
   onChangeGptMode: (v: GptImageMode) => void
   onChangeBananaMode: (v: BananaMode) => void
   onChangeAspectRatio: (v: AspectRatio) => void
   onChangeImageSize: (v: ImageSize) => void
+  onChangeImageQuality: (v: ImageQuality) => void
   onSend: (text: string, images: string[]) => void
 }
 
 const ASPECT_RATIOS: AspectRatio[] = ['1:1', '16:9', '9:16', '4:3', '3:4']
 const IMAGE_SIZES: ImageSize[] = ['1K', '2K', '4K']
+const IMAGE_QUALITIES: ImageQuality[] = ['auto', 'low', 'medium', 'high']
 
 const GPT_MODES: { id: GptImageMode; label: string; hint: string }[] = [
   {
@@ -36,7 +44,7 @@ const GPT_MODES: { id: GptImageMode; label: string; hint: string }[] = [
   {
     id: 'direct',
     label: 'Direct',
-    hint: 'gpt-image-2 · quality high',
+    hint: 'gpt-image-2 · Images API',
   },
 ]
 
@@ -53,10 +61,12 @@ export default function Composer({
   bananaMode,
   aspectRatio,
   imageSize,
+  imageQuality,
   onChangeGptMode,
   onChangeBananaMode,
   onChangeAspectRatio,
   onChangeImageSize,
+  onChangeImageQuality,
   onSend,
 }: Props) {
   const [text, setText] = useState('')
@@ -64,6 +74,7 @@ export default function Composer({
   const fileRef = useRef<HTMLInputElement>(null)
 
   const canSend = !disabled && (text.trim().length > 0 || images.length > 0)
+  const showGptQuality = workspace === 'gpt' && gptMode === 'direct'
 
   const handleFiles = async (files: FileList | null) => {
     if (!files) return
@@ -167,7 +178,7 @@ export default function Composer({
           className="max-h-40 w-full resize-none bg-transparent px-2 py-1 text-gray-900 outline-none placeholder:text-gray-400 dark:text-gray-100"
         />
 
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2 flex flex-wrap items-center gap-2">
           <input
             ref={fileRef}
             type="file"
@@ -185,8 +196,26 @@ export default function Composer({
             <ImageIcon className="h-5 w-5" />
           </button>
 
-          <SelectPill value={aspectRatio} options={ASPECT_RATIOS} onChange={(v) => onChangeAspectRatio(v as AspectRatio)} title="Aspect ratio" />
-          <SelectPill value={imageSize} options={IMAGE_SIZES} onChange={(v) => onChangeImageSize(v as ImageSize)} title="Resolution" />
+          <SelectPill
+            value={aspectRatio}
+            options={ASPECT_RATIOS.map((o) => ({ value: o, label: o }))}
+            onChange={(v) => onChangeAspectRatio(v as AspectRatio)}
+            title="Aspect ratio"
+          />
+          <SelectPill
+            value={imageSize}
+            options={IMAGE_SIZES.map((o) => ({ value: o, label: imageSizeCostHint(o) }))}
+            onChange={(v) => onChangeImageSize(v as ImageSize)}
+            title="Resolution — higher sizes cost more"
+          />
+          {showGptQuality && (
+            <SelectPill
+              value={imageQuality}
+              options={IMAGE_QUALITIES.map((o) => ({ value: o, label: imageQualityCostHint(o) }))}
+              onChange={(v) => onChangeImageQuality(v as ImageQuality)}
+              title="Quality — GPT Direct only; higher quality costs more"
+            />
+          )}
 
           <div className="flex-1" />
 
@@ -201,7 +230,11 @@ export default function Composer({
         </div>
       </div>
       <p className="mt-2 text-center text-xs text-gray-400 dark:text-gray-500">
-        Enter to send · Shift+Enter for a new line
+        {workspace === 'banana'
+          ? 'Resolution drives Banana cost (1K cheapest → 4K most expensive). Enter to send.'
+          : showGptQuality
+            ? 'Resolution + quality both affect Direct cost. Enter to send.'
+            : 'Resolution affects image size cost; Pro Thinking is mostly billed on reasoning tokens. Enter to send.'}
       </p>
     </div>
   )
@@ -220,7 +253,7 @@ function SelectPill({
   title,
 }: {
   value: string
-  options: string[]
+  options: Array<{ value: string; label: string }>
   onChange: (v: string) => void
   title: string
 }) {
@@ -229,11 +262,11 @@ function SelectPill({
       title={title}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600 outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+      className="max-w-[11rem] rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600 outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
     >
       {options.map((o) => (
-        <option key={o} value={o}>
-          {o}
+        <option key={o.value} value={o.value}>
+          {o.label}
         </option>
       ))}
     </select>

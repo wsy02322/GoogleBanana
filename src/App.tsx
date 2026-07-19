@@ -3,6 +3,7 @@ import type {
   AspectRatio,
   BananaMode,
   GptImageMode,
+  ImageQuality,
   ImageSize,
   SessionBucket,
   Settings,
@@ -76,6 +77,7 @@ export default function App() {
   const [bananaMode, setBananaMode] = useState<BananaMode>('thinking')
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1')
   const [imageSize, setImageSize] = useState<ImageSize>('1K')
+  const [imageQuality, setImageQuality] = useState<ImageQuality>('high')
   const [busyByWorkspace, setBusyByWorkspace] = useState<Partial<Record<Workspace, boolean>>>({})
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -244,6 +246,7 @@ export default function App() {
           {
             aspectRatio,
             imageSize,
+            imageQuality,
             mode: gptMode,
           },
           generationAbortSignal(),
@@ -477,10 +480,12 @@ export default function App() {
             bananaMode={bananaMode}
             aspectRatio={aspectRatio}
             imageSize={imageSize}
+            imageQuality={imageQuality}
             onChangeGptMode={setGptMode}
             onChangeBananaMode={setBananaMode}
             onChangeAspectRatio={setAspectRatio}
             onChangeImageSize={setImageSize}
+            onChangeImageQuality={setImageQuality}
             onSend={send}
           />
         </div>

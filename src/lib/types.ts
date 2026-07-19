@@ -7,7 +7,13 @@ export interface Settings {
 }
 
 export type AspectRatio = '1:1' | '16:9' | '9:16' | '4:3' | '3:4'
+/** Shared resolution tier for Banana + GPT (image_config / Images API). */
 export type ImageSize = '1K' | '2K' | '4K'
+/**
+ * GPT Images API quality knob (openai/gpt-image-2).
+ * Banana / Pro Thinking chat models do not expose this parameter.
+ */
+export type ImageQuality = 'auto' | 'low' | 'medium' | 'high'
 
 /** Banana = Gemini nano-banana path; gpt = OpenRouter GPT image studio */
 export type Workspace = 'banana' | 'gpt'
