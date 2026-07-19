@@ -39,7 +39,7 @@ export default function SettingsModal({ settings, onSave, onClose }: Props) {
         </div>
 
         <div className="space-y-4">
-          <Field label="API Key" hint="Stored only in your browser. Never sent to any server except your API base URL.">
+          <Field label="API Key" hint="Shared by Banana and GPT Image. Stored only in your browser.">
             <div className="flex gap-2">
               <input
                 type={showKey ? 'text' : 'password'}

@@ -97,4 +97,8 @@ location / {
 
 - **API Key** — your OpenRouter (or compatible) key, stored in `localStorage`.
 - **API Base URL** — defaults to `https://openrouter.ai/api/v1`.
-- **Model** — image-capable model id.
+- **Model** — image-capable model id (Banana workspace fallback label; mode chips pick the live model).
+
+Banana and GPT Image keep **separate chat histories** in the sidebar. Switching
+workspaces only changes which chat list is shown. Settings (API key, base URL,
+theme) are shared.

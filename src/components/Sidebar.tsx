@@ -1,9 +1,10 @@
-import type { Conversation } from '../lib/types'
+import type { Conversation, Workspace } from '../lib/types'
 import { ChatIcon, CloseIcon, PlusIcon, TrashIcon } from './icons'
 
 interface Props {
   conversations: Conversation[]
   activeId: string
+  workspace: Workspace
   open: boolean
   onClose: () => void
   onSelect: (id: string) => void
@@ -26,6 +27,7 @@ function formatRelativeTime(ts: number): string {
 export default function Sidebar({
   conversations,
   activeId,
+  workspace,
   open,
   onClose,
   onSelect,
@@ -33,6 +35,7 @@ export default function Sidebar({
   onDelete,
 }: Props) {
   const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt)
+  const historyLabel = workspace === 'gpt' ? 'GPT Image chats' : 'Banana chats'
 
   const handleSelect = (id: string) => {
     onSelect(id)
@@ -60,23 +63,28 @@ export default function Sidebar({
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="flex items-center justify-between gap-2 border-b border-gray-200 p-3 dark:border-gray-800">
-          <button
-            type="button"
-            onClick={handleNewChat}
-            className="flex flex-1 items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-          >
-            <PlusIcon className="h-4 w-4 shrink-0" />
-            New chat
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-2 text-gray-500 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-800 lg:hidden"
-            aria-label="Close sidebar"
-          >
-            <CloseIcon className="h-5 w-5" />
-          </button>
+        <div className="border-b border-gray-200 p-3 dark:border-gray-800">
+          <p className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            {historyLabel}
+          </p>
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={handleNewChat}
+              className="flex flex-1 items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+            >
+              <PlusIcon className="h-4 w-4 shrink-0" />
+              New chat
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg p-2 text-gray-500 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-800 lg:hidden"
+              aria-label="Close sidebar"
+            >
+              <CloseIcon className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-2">

@@ -96,10 +96,23 @@ export interface Conversation {
   updatedAt: number
 }
 
-export interface SessionsData {
+/** One workspace's chat list + active conversation. */
+export interface SessionBucket {
   activeId: string
   conversations: Conversation[]
 }
+
+/**
+ * Banana and GPT Image keep independent chat histories.
+ * Settings (API key, base URL, theme) stay shared across workspaces.
+ */
+export interface WorkspaceSessions {
+  banana: SessionBucket
+  gpt: SessionBucket
+}
+
+/** @deprecated Use SessionBucket / WorkspaceSessions — kept for migration typing. */
+export type SessionsData = SessionBucket
 
 export interface ModelOption {
   id: string

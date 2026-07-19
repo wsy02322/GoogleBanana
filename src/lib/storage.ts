@@ -1,7 +1,16 @@
-import type { Conversation, SessionsData, Settings, Turn } from './types'
+import type {
+  Conversation,
+  SessionBucket,
+  Settings,
+  Turn,
+  Workspace,
+  WorkspaceSessions,
+} from './types'
 
 const SETTINGS_KEY = 'googlebanana.settings.v1'
-const SESSIONS_KEY = 'googlebanana.sessions.v1'
+const SESSIONS_KEY_V1 = 'googlebanana.sessions.v1'
+const SESSIONS_KEY = 'googlebanana.sessions.v2'
+const UI_KEY = 'googlebanana.ui.v1'
 const LEGACY_HISTORY_KEY = 'googlebanana.history.v1'
 
 export const DEFAULT_MODEL = 'google/gemini-3-pro-image'
@@ -41,6 +50,20 @@ export function createConversation(turns: Turn[] = []): Conversation {
   }
 }
 
+function emptyBucket(): SessionBucket {
+  const conv = createConversation()
+  return { activeId: conv.id, conversations: [conv] }
+}
+
+function normalizeBucket(bucket: SessionBucket | undefined | null): SessionBucket {
+  if (!bucket?.conversations?.length) return emptyBucket()
+  const activeExists = bucket.conversations.some((c) => c.id === bucket.activeId)
+  if (!activeExists) {
+    return { ...bucket, activeId: bucket.conversations[0].id }
+  }
+  return bucket
+}
+
 function loadLegacyHistory(): Turn[] {
   try {
     const raw = localStorage.getItem(LEGACY_HISTORY_KEY)
@@ -51,7 +74,7 @@ function loadLegacyHistory(): Turn[] {
   }
 }
 
-function migrateLegacyHistory(): SessionsData | null {
+function migrateLegacyHistory(): SessionBucket | null {
   const turns = loadLegacyHistory()
   if (turns.length === 0) return null
   const conv = createConversation(turns)
@@ -59,34 +82,82 @@ function migrateLegacyHistory(): SessionsData | null {
   return { activeId: conv.id, conversations: [conv] }
 }
 
-export function loadSessions(): SessionsData {
+function loadSessionsV1(): SessionBucket | null {
+  try {
+    const raw = localStorage.getItem(SESSIONS_KEY_V1)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as SessionBucket
+    if (parsed.conversations?.length > 0 && parsed.activeId) {
+      return normalizeBucket(parsed)
+    }
+  } catch {
+    // ignore
+  }
+  return null
+}
+
+function isWorkspaceSessions(value: unknown): value is WorkspaceSessions {
+  if (!value || typeof value !== 'object') return false
+  const v = value as WorkspaceSessions
+  return Boolean(v.banana && v.gpt)
+}
+
+/**
+ * Load per-workspace chat histories.
+ * Migrates flat v1 sessions (and older single-history) into the banana bucket;
+ * GPT starts with a fresh empty chat. Settings/API key are unchanged.
+ */
+export function loadWorkspaceSessions(): WorkspaceSessions {
   try {
     const raw = localStorage.getItem(SESSIONS_KEY)
     if (raw) {
-      const parsed = JSON.parse(raw) as SessionsData
-      if (parsed.conversations?.length > 0 && parsed.activeId) {
-        const activeExists = parsed.conversations.some((c) => c.id === parsed.activeId)
-        if (!activeExists) parsed.activeId = parsed.conversations[0].id
-        return parsed
+      const parsed = JSON.parse(raw) as unknown
+      if (isWorkspaceSessions(parsed)) {
+        return {
+          banana: normalizeBucket(parsed.banana),
+          gpt: normalizeBucket(parsed.gpt),
+        }
       }
     }
   } catch {
-    // fall through to migration / default
+    // fall through
   }
 
-  const migrated = migrateLegacyHistory()
-  if (migrated) return migrated
+  const fromV1 = loadSessionsV1()
+  const fromLegacy = fromV1 ? null : migrateLegacyHistory()
+  const banana = normalizeBucket(fromV1 ?? fromLegacy)
 
-  const conv = createConversation()
-  return { activeId: conv.id, conversations: [conv] }
+  const migrated: WorkspaceSessions = {
+    banana,
+    gpt: emptyBucket(),
+  }
+  saveWorkspaceSessions(migrated)
+  // Drop flat v1 after successful split so we don't double-migrate later.
+  try {
+    localStorage.removeItem(SESSIONS_KEY_V1)
+  } catch {
+    // ignore
+  }
+  return migrated
 }
 
-export function saveSessions(data: SessionsData): void {
+export function saveWorkspaceSessions(data: WorkspaceSessions): void {
   try {
     localStorage.setItem(SESSIONS_KEY, JSON.stringify(data))
   } catch {
     // Ignore quota errors (base64 images can be large); history is best-effort.
   }
+}
+
+/** @deprecated Prefer loadWorkspaceSessions */
+export function loadSessions(): SessionBucket {
+  return loadWorkspaceSessions().banana
+}
+
+/** @deprecated Prefer saveWorkspaceSessions */
+export function saveSessions(data: SessionBucket): void {
+  const current = loadWorkspaceSessions()
+  saveWorkspaceSessions({ ...current, banana: data })
 }
 
 export function loadSettings(): Settings {
@@ -102,4 +173,23 @@ export function loadSettings(): Settings {
 
 export function saveSettings(settings: Settings): void {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
+}
+
+export function loadLastWorkspace(): Workspace {
+  try {
+    const raw = localStorage.getItem(UI_KEY)
+    if (!raw) return 'banana'
+    const parsed = JSON.parse(raw) as { workspace?: Workspace }
+    return parsed.workspace === 'gpt' ? 'gpt' : 'banana'
+  } catch {
+    return 'banana'
+  }
+}
+
+export function saveLastWorkspace(workspace: Workspace): void {
+  try {
+    localStorage.setItem(UI_KEY, JSON.stringify({ workspace }))
+  } catch {
+    // ignore
+  }
 }
