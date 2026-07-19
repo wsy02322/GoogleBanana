@@ -137,12 +137,10 @@ export default function App() {
     ;(async () => {
       const result = await saveWorkspaceSessionsAsync(workspaceSessions)
       if (cancelled) return
-      if (result.warning) {
+      if (result.status === 'saved' && !result.warning) {
+        setStorageWarning(undefined)
+      } else if (result.warning) {
         setStorageWarning(result.warning)
-      } else if (result.status === 'saved') {
-        setStorageWarning((prev) =>
-          prev && /Migrated chat history to IndexedDB/i.test(prev) ? prev : undefined,
-        )
       }
     })()
     return () => {
