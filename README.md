@@ -54,6 +54,39 @@ front for HTTPS. Set `proxy_read_timeout` (Nginx) or equivalent to at least
 
 Health check: `GET /healthz` → `{"ok":true}`.
 
+#### Run an old and new version side by side
+
+Give each Compose project a unique container name and host port. For the new
+copy, change `docker-compose.yml` to:
+
+```yaml
+services:
+  googlebanana:
+    container_name: googlebanana-v2
+    ports:
+      - "0.0.0.0:8788:8787"
+```
+
+Then start it from the new checkout:
+
+```bash
+cd /opt/GoogleBanana-v2
+docker compose -p googlebanana-v2 up -d --build
+curl http://127.0.0.1:8788/healthz
+```
+
+The existing instance can remain on port `8787`; the new one is available at
+`http://SERVER_IP:8788`. Restrict the firewall or bind to `127.0.0.1` and use a
+reverse proxy if the service should not be publicly reachable.
+
+Without Compose, the equivalent is:
+
+```bash
+docker build --no-cache -t googlebanana:v2 .
+docker run -d --name googlebanana-v2 --restart unless-stopped \
+  -p 8788:8787 -e PROXY_TIMEOUT_MS=600000 googlebanana:v2
+```
+
 #### Reverse proxy examples
 
 **Caddy** (`banana.example.com`):
@@ -98,7 +131,9 @@ location / {
 - **API Key** — your OpenRouter (or compatible) key, stored in `localStorage`.
 - **API Base URL** — defaults to `https://openrouter.ai/api/v1`.
 - **Model** — image-capable model id (Banana workspace fallback label; mode chips pick the live model).
+- **Theme** — follow the device theme, or force light/dark.
 
 Banana and GPT Image keep **separate chat histories** in the sidebar. Switching
 workspaces only changes which chat list is shown. Settings (API key, base URL,
-theme) are shared.
+theme) are shared. Each workspace remembers its own aspect ratio, resolution,
+and quality controls.
