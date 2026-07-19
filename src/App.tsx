@@ -9,6 +9,7 @@ import type {
   Settings,
   Turn,
   Workspace,
+  WorkspaceImagePreferences,
   WorkspaceSessions,
 } from './lib/types'
 import {
@@ -18,6 +19,8 @@ import {
   saveWorkspaceSessions,
   loadLastWorkspace,
   saveLastWorkspace,
+  loadWorkspaceImagePreferences,
+  saveWorkspaceImagePreferences,
   createConversation,
   conversationTitle,
 } from './lib/storage'
@@ -53,7 +56,7 @@ function applyTheme(theme: Settings['theme']) {
 
 const EXAMPLE_PROMPTS = [
   'A photorealistic banana astronaut floating in space, cinematic lighting',
-  "Infographic of today's weather in Tokyo with accurate current conditions",
+  'A clear educational infographic explaining the water cycle with labeled arrows',
   'Logo for a fruit startup called "GoogleBanana", minimal flat vector',
   'A resplendent quetzal bird on a misty branch, natural light, photorealistic',
 ]
@@ -75,19 +78,21 @@ export default function App() {
   const [workspace, setWorkspace] = useState<Workspace>(() => loadLastWorkspace())
   const [gptMode, setGptMode] = useState<GptImageMode>('pro-thinking')
   const [bananaMode, setBananaMode] = useState<BananaMode>('thinking')
-  const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1')
-  const [imageSize, setImageSize] = useState<ImageSize>('1K')
-  const [imageQuality, setImageQuality] = useState<ImageQuality>('high')
-  const [busyByWorkspace, setBusyByWorkspace] = useState<Partial<Record<Workspace, boolean>>>({})
+  const [imagePreferences, setImagePreferences] = useState<WorkspaceImagePreferences>(() =>
+    loadWorkspaceImagePreferences(),
+  )
+  const [activeJobs, setActiveJobs] = useState<Partial<Record<Workspace, string>>>({})
+  const [storageWarning, setStorageWarning] = useState<string>()
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const sessions = workspaceSessions[workspace]
-  const busy = Boolean(busyByWorkspace[workspace])
+  const currentImagePreferences = imagePreferences[workspace]
+  const busy = Boolean(activeJobs[workspace])
   const otherBusy =
-    workspace === 'banana' ? Boolean(busyByWorkspace.gpt) : Boolean(busyByWorkspace.banana)
+    workspace === 'banana' ? Boolean(activeJobs.gpt) : Boolean(activeJobs.banana)
 
-  const setWorkspaceBusy = (ws: Workspace, next: boolean) => {
-    setBusyByWorkspace((prev) => ({ ...prev, [ws]: next }))
+  const setWorkspaceJob = (ws: Workspace, conversationId: string | undefined) => {
+    setActiveJobs((prev) => ({ ...prev, [ws]: conversationId }))
   }
 
   const activeConversation = useMemo(() => {
@@ -99,8 +104,22 @@ export default function App() {
   const turns = useMemo(() => activeConversation?.turns ?? [], [activeConversation])
 
   useEffect(() => applyTheme(settings.theme), [settings.theme])
-  useEffect(() => saveWorkspaceSessions(workspaceSessions), [workspaceSessions])
+  useEffect(() => {
+    const result = saveWorkspaceSessions(workspaceSessions)
+    if (result.status === 'trimmed') {
+      setStorageWarning(
+        `${result.trimmedImages} older embedded image${result.trimmedImages === 1 ? ' was' : 's were'} removed from saved browser history to fit storage. Chat text is preserved.`,
+      )
+    } else if (result.status === 'failed') {
+      setStorageWarning(
+        'Browser storage is full. New chat history may not survive a reload; download important images now.',
+      )
+    } else {
+      setStorageWarning(undefined)
+    }
+  }, [workspaceSessions])
   useEffect(() => saveLastWorkspace(workspace), [workspace])
+  useEffect(() => saveWorkspaceImagePreferences(imagePreferences), [imagePreferences])
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [turns, sessions.activeId, workspace])
@@ -145,12 +164,10 @@ export default function App() {
   }
 
   const selectConversation = (id: string) => {
-    if (busy) return
     updateWorkspaceBucket(workspace, (prev) => ({ ...prev, activeId: id }))
   }
 
   const newChat = () => {
-    if (busy) return
     const current = sessions.conversations.find((c) => c.id === sessions.activeId)
     if (current && current.turns.length === 0) return
 
@@ -162,7 +179,7 @@ export default function App() {
   }
 
   const deleteConversation = (id: string) => {
-    if (busy) return
+    if (activeJobs[workspace] === id) return
     updateWorkspaceBucket(workspace, (prev) => {
       const remaining = prev.conversations.filter((c) => c.id !== id)
       if (remaining.length === 0) {
@@ -179,7 +196,6 @@ export default function App() {
 
   const enterGptWorkspace = () => {
     setWorkspace('gpt')
-    setImageSize((prev) => (prev === '1K' ? '2K' : prev))
   }
 
   const leaveGptWorkspace = () => {
@@ -192,13 +208,14 @@ export default function App() {
     history: Turn[],
     assistantId: string,
     mode: BananaMode,
+    preferences = imagePreferences[ws],
   ) => {
     const result = await generateImage(
       settings,
       history,
       {
-        aspectRatio,
-        imageSize,
+        aspectRatio: preferences.aspectRatio,
+        imageSize: preferences.imageSize,
         bananaMode: mode,
       },
       generationAbortSignal(),
@@ -223,6 +240,7 @@ export default function App() {
     if (busy || !activeConversation) return
     const jobWorkspace = workspace
     const jobConversationId = activeConversation.id
+    const jobPreferences = imagePreferences[jobWorkspace]
     const userTurn: Turn = { id: uid(), role: 'user', text, images, createdAt: Date.now() }
     const assistantTurn: Turn = {
       id: uid(),
@@ -236,7 +254,7 @@ export default function App() {
     }
     const history = [...turns, userTurn]
     updateConversationTurns(jobWorkspace, jobConversationId, [...history, assistantTurn])
-    setWorkspaceBusy(jobWorkspace, true)
+    setWorkspaceJob(jobWorkspace, jobConversationId)
 
     try {
       if (jobWorkspace === 'gpt') {
@@ -244,9 +262,9 @@ export default function App() {
           settings,
           history,
           {
-            aspectRatio,
-            imageSize,
-            imageQuality,
+            aspectRatio: jobPreferences.aspectRatio,
+            imageSize: jobPreferences.imageSize,
+            imageQuality: jobPreferences.imageQuality,
             mode: gptMode,
           },
           generationAbortSignal(),
@@ -272,6 +290,7 @@ export default function App() {
           history,
           assistantTurn.id,
           bananaMode,
+          jobPreferences,
         )
       }
     } catch (err) {
@@ -288,7 +307,7 @@ export default function App() {
         prev.map((t) => (t.id === assistantTurn.id ? { ...t, pending: false, error: message } : t)),
       )
     } finally {
-      setWorkspaceBusy(jobWorkspace, false)
+      setWorkspaceJob(jobWorkspace, undefined)
     }
   }
 
@@ -310,19 +329,38 @@ export default function App() {
       bananaMode: 'pro',
     }
     updateConversationTurns(jobWorkspace, jobConversationId, [...turns, redoTurn])
-    setWorkspaceBusy(jobWorkspace, true)
+    setWorkspaceJob(jobWorkspace, jobConversationId)
     setBananaMode('pro')
 
     try {
-      await runBananaGenerate(jobWorkspace, jobConversationId, history, redoTurn.id, 'pro')
+      await runBananaGenerate(
+        jobWorkspace,
+        jobConversationId,
+        history,
+        redoTurn.id,
+        'pro',
+        imagePreferences[jobWorkspace],
+      )
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       updateConversationTurns(jobWorkspace, jobConversationId, (prev) =>
         prev.map((t) => (t.id === redoTurn.id ? { ...t, pending: false, error: message } : t)),
       )
     } finally {
-      setWorkspaceBusy(jobWorkspace, false)
+      setWorkspaceJob(jobWorkspace, undefined)
     }
+  }
+
+  const updateImagePreference = <
+    K extends keyof WorkspaceImagePreferences[Workspace],
+  >(
+    key: K,
+    value: WorkspaceImagePreferences[Workspace][K],
+  ) => {
+    setImagePreferences((prev) => ({
+      ...prev,
+      [workspace]: { ...prev[workspace], [key]: value },
+    }))
   }
 
   const toggleTheme = () => {
@@ -353,6 +391,7 @@ export default function App() {
         onSelect={selectConversation}
         onNewChat={newChat}
         onDelete={deleteConversation}
+        busyConversationId={activeJobs[workspace]}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -475,17 +514,22 @@ export default function App() {
         <div className="border-t border-gray-100 px-4 py-4 dark:border-gray-800">
           <Composer
             disabled={!hasKey || busy}
+            storageWarning={storageWarning}
             workspace={workspace}
             gptMode={gptMode}
             bananaMode={bananaMode}
-            aspectRatio={aspectRatio}
-            imageSize={imageSize}
-            imageQuality={imageQuality}
+            aspectRatio={currentImagePreferences.aspectRatio}
+            imageSize={currentImagePreferences.imageSize}
+            imageQuality={currentImagePreferences.imageQuality}
             onChangeGptMode={setGptMode}
             onChangeBananaMode={setBananaMode}
-            onChangeAspectRatio={setAspectRatio}
-            onChangeImageSize={setImageSize}
-            onChangeImageQuality={setImageQuality}
+            onChangeAspectRatio={(value: AspectRatio) =>
+              updateImagePreference('aspectRatio', value)
+            }
+            onChangeImageSize={(value: ImageSize) => updateImagePreference('imageSize', value)}
+            onChangeImageQuality={(value: ImageQuality) =>
+              updateImagePreference('imageQuality', value)
+            }
             onSend={send}
           />
         </div>

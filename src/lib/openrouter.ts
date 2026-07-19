@@ -79,9 +79,9 @@ export function composerCostFootnote(
     return 'Banana has no separate quality knob — resolution is the main cost/detail control (1K ~1×, 2K ~2–4×, 4K ~4–10×; rough). Enter to send.'
   }
   if (gptMode === 'direct') {
-    return 'Direct: resolution (1K→4K ~1×→4–10×) and quality (low→high ~1×→4×) both raise cost and detail — rough OpenRouter/OpenAI scales. Enter to send.'
+    return 'Direct: highest direct image quality; latest prompt only (no chat history). Re-attach a previous result and restate prior instructions to continue editing. Enter to send.'
   }
-  return 'Pro Thinking: resolution still affects image size cost (~1×/2–4×/4–10×). Most spend is usually reasoning tokens, not the quality enum (Direct-only). Enter to send.'
+  return 'Pro Thinking balances image quality, multi-turn editing, and high reasoning. Resolution still affects cost (~1×/2–4×/4–10×); quality control is Direct-only. Enter to send.'
 }
 
 function bananaReasoningEffort(mode: BananaMode): 'minimal' | 'high' {
@@ -116,7 +116,7 @@ function proxyHeaders(settings: Settings, apiPath: 'chat/completions' | 'images'
     Authorization: `Bearer ${settings.apiKey.trim()}`,
     'X-OR-Base-URL': settings.baseUrl.trim(),
     'X-OR-Path': apiPath,
-    'X-OR-Title': settings.siteTitle || 'GoogleBanana',
+    'X-OR-Title': 'GoogleBanana',
     'X-OR-Referer': typeof location !== 'undefined' ? location.origin : '',
   }
 }

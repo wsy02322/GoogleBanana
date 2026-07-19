@@ -2,7 +2,6 @@ export interface Settings {
   baseUrl: string
   apiKey: string
   model: string
-  siteTitle: string
   theme: 'light' | 'dark' | 'system'
 }
 
@@ -17,6 +16,15 @@ export type ImageQuality = 'auto' | 'low' | 'medium' | 'high'
 
 /** Banana = Gemini nano-banana path; gpt = OpenRouter GPT image studio */
 export type Workspace = 'banana' | 'gpt'
+
+export interface ImagePreferences {
+  aspectRatio: AspectRatio
+  imageSize: ImageSize
+  imageQuality: ImageQuality
+}
+
+/** Each workspace remembers its own output controls. */
+export type WorkspaceImagePreferences = Record<Workspace, ImagePreferences>
 
 /**
  * Mode A: chat multimodal with high reasoning effort.

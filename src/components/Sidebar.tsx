@@ -6,6 +6,7 @@ interface Props {
   activeId: string
   workspace: Workspace
   open: boolean
+  busyConversationId?: string
   onClose: () => void
   onSelect: (id: string) => void
   onNewChat: () => void
@@ -29,6 +30,7 @@ export default function Sidebar({
   activeId,
   workspace,
   open,
+  busyConversationId,
   onClose,
   onSelect,
   onNewChat,
@@ -94,6 +96,7 @@ export default function Sidebar({
             <ul className="space-y-0.5">
               {sorted.map((conv) => {
                 const active = conv.id === activeId
+                const generating = conv.id === busyConversationId
                 return (
                   <li key={conv.id}>
                     <div
@@ -124,7 +127,7 @@ export default function Sidebar({
                             {conv.title}
                           </span>
                           <span className="block text-xs text-gray-500 dark:text-gray-500">
-                            {formatRelativeTime(conv.updatedAt)}
+                            {generating ? 'Generating…' : formatRelativeTime(conv.updatedAt)}
                           </span>
                         </span>
                       </button>
@@ -134,9 +137,12 @@ export default function Sidebar({
                           e.stopPropagation()
                           onDelete(conv.id)
                         }}
-                        className="mr-1 shrink-0 rounded-md p-1.5 text-gray-400 opacity-0 transition hover:bg-red-100 hover:text-red-600 group-hover:opacity-100 dark:hover:bg-red-950 dark:hover:text-red-400"
-                        aria-label={`Delete ${conv.title}`}
-                        title="Delete chat"
+                        disabled={generating}
+                        className="mr-1 shrink-0 rounded-md p-1.5 text-gray-400 opacity-0 transition hover:bg-red-100 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-20 group-hover:opacity-100 dark:hover:bg-red-950 dark:hover:text-red-400"
+                        aria-label={
+                          generating ? `Cannot delete ${conv.title} while generating` : `Delete ${conv.title}`
+                        }
+                        title={generating ? 'Cannot delete while generating' : 'Delete chat'}
                       >
                         <TrashIcon className="h-4 w-4" />
                       </button>

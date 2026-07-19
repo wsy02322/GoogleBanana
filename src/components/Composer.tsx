@@ -18,6 +18,7 @@ import { ImageIcon, SendIcon, CloseIcon } from './icons'
 
 interface Props {
   disabled: boolean
+  storageWarning?: string
   workspace: Workspace
   gptMode: GptImageMode
   bananaMode: BananaMode
@@ -40,12 +41,12 @@ const GPT_MODES: { id: GptImageMode; label: string; hint: string }[] = [
   {
     id: 'pro-thinking',
     label: 'Pro Thinking',
-    hint: 'gpt-5.4-image-2 · reasoning high · often 2–5+ min',
+    hint: 'gpt-5.4-image-2 · high reasoning · balances quality, multi-turn editing, and reasoning',
   },
   {
     id: 'direct',
     label: 'Direct',
-    hint: 'gpt-image-2 · Images API',
+    hint: 'gpt-image-2 · highest direct image quality · latest prompt only (no chat history)',
   },
 ]
 
@@ -57,6 +58,7 @@ const BANANA_MODES: { id: BananaMode; label: string }[] = [
 
 export default function Composer({
   disabled,
+  storageWarning,
   workspace,
   gptMode,
   bananaMode,
@@ -233,6 +235,14 @@ export default function Composer({
       <p className="mt-2 text-center text-xs leading-snug text-gray-400 dark:text-gray-500">
         {composerCostFootnote(workspace, gptMode)}
       </p>
+      <p className="mt-1 text-center text-xs leading-snug text-gray-400 dark:text-gray-500">
+        Download images you want to keep. Browser chat history is best-effort.
+      </p>
+      {storageWarning && (
+        <p className="mt-1 text-center text-xs font-medium leading-snug text-amber-700 dark:text-amber-300">
+          {storageWarning}
+        </p>
+      )}
     </div>
   )
 }
