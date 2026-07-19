@@ -1,12 +1,15 @@
 import { useRef, useState } from 'react'
-import type { AspectRatio, ImageSize } from '../lib/types'
+import type { AspectRatio, GptImageMode, ImageSize, Workspace } from '../lib/types'
 import { fileToDataUrl } from '../lib/image'
 import { ImageIcon, SendIcon, CloseIcon } from './icons'
 
 interface Props {
   disabled: boolean
+  workspace: Workspace
+  gptMode: GptImageMode
   aspectRatio: AspectRatio
   imageSize: ImageSize
+  onChangeGptMode: (v: GptImageMode) => void
   onChangeAspectRatio: (v: AspectRatio) => void
   onChangeImageSize: (v: ImageSize) => void
   onSend: (text: string, images: string[]) => void
@@ -15,10 +18,26 @@ interface Props {
 const ASPECT_RATIOS: AspectRatio[] = ['1:1', '16:9', '9:16', '4:3', '3:4']
 const IMAGE_SIZES: ImageSize[] = ['1K', '2K', '4K']
 
+const GPT_MODES: { id: GptImageMode; label: string; hint: string }[] = [
+  {
+    id: 'pro-thinking',
+    label: 'Pro Thinking',
+    hint: 'gpt-5.4-image-2 · reasoning high',
+  },
+  {
+    id: 'direct',
+    label: 'Direct',
+    hint: 'gpt-image-2 · quality high',
+  },
+]
+
 export default function Composer({
   disabled,
+  workspace,
+  gptMode,
   aspectRatio,
   imageSize,
+  onChangeGptMode,
   onChangeAspectRatio,
   onChangeImageSize,
   onSend,
@@ -56,6 +75,33 @@ export default function Composer({
 
   return (
     <div className="mx-auto w-full max-w-3xl">
+      {workspace === 'gpt' && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          {GPT_MODES.map((m) => {
+            const active = gptMode === m.id
+            return (
+              <button
+                key={m.id}
+                type="button"
+                disabled={disabled}
+                onClick={() => onChangeGptMode(m.id)}
+                title={m.hint}
+                className={
+                  active
+                    ? 'rounded-full border border-gray-900 bg-gray-900 px-3 py-1.5 text-xs text-white dark:border-banana-400 dark:bg-banana-400 dark:text-gray-900'
+                    : 'rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-gray-600'
+                }
+              >
+                {m.label}
+              </button>
+            )
+          })}
+          <span className="text-xs text-gray-400 dark:text-gray-500">
+            {GPT_MODES.find((m) => m.id === gptMode)?.hint}
+          </span>
+        </div>
+      )}
+
       <div className="rounded-3xl border border-gray-200 bg-white p-3 shadow-lg dark:border-gray-700 dark:bg-gray-800">
         {images.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
@@ -79,7 +125,11 @@ export default function Composer({
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
           rows={1}
-          placeholder="Describe an image, or attach one to edit…"
+          placeholder={
+            workspace === 'gpt'
+              ? 'Describe an image for GPT Image…'
+              : 'Describe an image, or attach one to edit…'
+          }
           className="max-h-40 w-full resize-none bg-transparent px-2 py-1 text-gray-900 outline-none placeholder:text-gray-400 dark:text-gray-100"
         />
 
