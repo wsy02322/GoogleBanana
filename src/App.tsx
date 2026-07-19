@@ -81,8 +81,22 @@ export default function App() {
   const [searchGrounding, setSearchGrounding] = useState<SearchGrounding>('off')
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1')
   const [imageSize, setImageSize] = useState<ImageSize>('1K')
+  const [modeNotice, setModeNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const modeNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const showModeNotice = (message: string) => {
+    if (modeNoticeTimer.current) clearTimeout(modeNoticeTimer.current)
+    setModeNotice(message)
+    modeNoticeTimer.current = setTimeout(() => setModeNotice(null), 8000)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (modeNoticeTimer.current) clearTimeout(modeNoticeTimer.current)
+    }
+  }, [])
 
   const sessions = workspaceSessions[workspace]
 
@@ -183,11 +197,13 @@ export default function App() {
 
   const changeBananaMode = (mode: BananaMode) => {
     setBananaMode(mode)
-    // Native image-search grounding is only supported by Nano Banana 2.
-    // Keep Pro available for web-only grounding, but never present Pro +
-    // Image Search as a valid combination.
+    // Native Image Search grounding is Nano Banana 2 only (Google docs).
+    // Pro + Web is fine; Pro + Web/Image is not.
     if (mode === 'pro' && searchGrounding === 'web-image') {
       setSearchGrounding('web')
+      showModeNotice(
+        'Pro 不支持 Image Search。已自动改为 Web 搜索。需要“Web + Image”请用 Fast/Thinking（Nano Banana 2）。',
+      )
     }
   }
 
@@ -195,6 +211,9 @@ export default function App() {
     setSearchGrounding(search)
     if (search === 'web-image' && bananaMode === 'pro') {
       setBananaMode('thinking')
+      showModeNotice(
+        'Web + Image Search 仅支持 Nano Banana 2。已自动从 Pro 切换到 Thinking。Pro 仍可用 Web 搜索。',
+      )
     }
   }
 
@@ -486,6 +505,8 @@ export default function App() {
             searchGrounding={searchGrounding}
             aspectRatio={aspectRatio}
             imageSize={imageSize}
+            modeNotice={workspace === 'banana' ? modeNotice : null}
+            onDismissModeNotice={() => setModeNotice(null)}
             onChangeGptMode={setGptMode}
             onChangeBananaMode={changeBananaMode}
             onChangeSearchGrounding={changeSearchGrounding}

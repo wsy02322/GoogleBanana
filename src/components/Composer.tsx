@@ -19,6 +19,9 @@ interface Props {
   searchGrounding: SearchGrounding
   aspectRatio: AspectRatio
   imageSize: ImageSize
+  /** Shown when the app auto-corrects an unsupported mode combo. */
+  modeNotice?: string | null
+  onDismissModeNotice?: () => void
   onChangeGptMode: (v: GptImageMode) => void
   onChangeBananaMode: (v: BananaMode) => void
   onChangeSearchGrounding: (v: SearchGrounding) => void
@@ -67,6 +70,8 @@ export default function Composer({
   searchGrounding,
   aspectRatio,
   imageSize,
+  modeNotice,
+  onDismissModeNotice,
   onChangeGptMode,
   onChangeBananaMode,
   onChangeSearchGrounding,
@@ -142,10 +147,14 @@ export default function Composer({
                   onClick={() => onChangeBananaMode(m.id)}
                   title={
                     unavailable
-                      ? 'Web + Image Search requires Nano Banana 2 (Fast or Thinking)'
+                      ? 'Pro 不支持 Image Search；请用 Fast/Thinking，或改回 Web'
                       : bananaModeHint(m.id)
                   }
-                  className={`${pillClass(active)} disabled:cursor-not-allowed disabled:opacity-50`}
+                  className={`${pillClass(active)} ${
+                    unavailable
+                      ? 'cursor-not-allowed border-red-300 bg-red-50 text-red-700 opacity-80 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300'
+                      : 'disabled:cursor-not-allowed disabled:opacity-50'
+                  }`}
                 >
                   {m.label}
                 </button>
@@ -175,6 +184,27 @@ export default function Composer({
               {SEARCH_OPTIONS.find((s) => s.id === searchGrounding)?.hint}
             </span>
           </div>
+          {modeNotice && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-xl border-2 border-red-500 bg-red-50 px-3 py-2.5 text-sm font-medium text-red-800 dark:border-red-400 dark:bg-red-950/60 dark:text-red-200"
+            >
+              <span className="mt-0.5 shrink-0 text-base leading-none" aria-hidden>
+                !
+              </span>
+              <p className="min-w-0 flex-1 leading-snug">{modeNotice}</p>
+              {onDismissModeNotice && (
+                <button
+                  type="button"
+                  onClick={onDismissModeNotice}
+                  className="shrink-0 rounded-md p-0.5 text-red-700 hover:bg-red-100 dark:text-red-200 dark:hover:bg-red-900"
+                  aria-label="Dismiss notice"
+                >
+                  <CloseIcon className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
 
