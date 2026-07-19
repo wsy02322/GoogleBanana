@@ -1,9 +1,14 @@
+export type UiMode = 'gemini' | 'chatgpt'
+export type IntelligenceLevel = 'low' | 'medium' | 'high'
+
 export interface Settings {
   baseUrl: string
   apiKey: string
   model: string
   siteTitle: string
   theme: 'light' | 'dark' | 'system'
+  uiMode: UiMode
+  intelligence: IntelligenceLevel
 }
 
 export type AspectRatio = '1:1' | '16:9' | '9:16' | '4:3' | '3:4'
