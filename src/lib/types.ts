@@ -18,6 +18,23 @@ export type Workspace = 'banana' | 'gpt'
  */
 export type GptImageMode = 'pro-thinking' | 'direct'
 
+/**
+ * Gemini app–style image intelligence lanes:
+ * - fast: Nano Banana 2 with minimal thinking
+ * - thinking: Nano Banana 2 with high thinking
+ * - pro: Nano Banana Pro (highest fidelity)
+ */
+export type BananaMode = 'fast' | 'thinking' | 'pro'
+
+/** Grounding / search for banana image generation */
+export type SearchGrounding = 'off' | 'web' | 'web-image'
+
+export interface Citation {
+  url: string
+  title: string
+  content?: string
+}
+
 export interface Turn {
   id: string
   role: 'user' | 'assistant'
@@ -26,6 +43,11 @@ export interface Turn {
   createdAt: number
   pending?: boolean
   error?: string
+  /** Banana intelligence metadata (assistant turns) */
+  bananaMode?: BananaMode
+  searchGrounding?: SearchGrounding
+  reasoning?: string
+  citations?: Citation[]
 }
 
 export interface Conversation {

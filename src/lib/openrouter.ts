@@ -1,4 +1,13 @@
-import type { AspectRatio, GptImageMode, ImageSize, Settings, Turn } from './types'
+import type {
+  AspectRatio,
+  BananaMode,
+  Citation,
+  GptImageMode,
+  ImageSize,
+  SearchGrounding,
+  Settings,
+  Turn,
+} from './types'
 
 interface ContentPart {
   type: 'text' | 'image_url'
@@ -14,15 +23,45 @@ interface ChatMessage {
 export interface GenerateOptions {
   aspectRatio: AspectRatio
   imageSize: ImageSize
+  bananaMode?: BananaMode
+  searchGrounding?: SearchGrounding
 }
 
 export interface GenerateResult {
   text: string
   images: string[]
+  reasoning?: string
+  citations?: Citation[]
+  modelUsed?: string
+  bananaMode?: BananaMode
+  searchGrounding?: SearchGrounding
 }
 
 export const GPT_PRO_THINKING_MODEL = 'openai/gpt-5.4-image-2'
 export const GPT_DIRECT_MODEL = 'openai/gpt-image-2'
+
+export const BANANA_FLASH_MODEL = 'google/gemini-3.1-flash-image'
+export const BANANA_PRO_MODEL = 'google/gemini-3-pro-image'
+
+export function bananaModeModelId(mode: BananaMode): string {
+  return mode === 'pro' ? BANANA_PRO_MODEL : BANANA_FLASH_MODEL
+}
+
+export function bananaModeLabel(mode: BananaMode): string {
+  if (mode === 'fast') return 'Fast'
+  if (mode === 'thinking') return 'Thinking'
+  return 'Pro'
+}
+
+export function bananaModeHint(mode: BananaMode): string {
+  if (mode === 'fast') return 'Nano Banana 2 · minimal thinking'
+  if (mode === 'thinking') return 'Nano Banana 2 · high thinking'
+  return 'Nano Banana Pro · highest fidelity'
+}
+
+function bananaReasoningEffort(mode: BananaMode): 'minimal' | 'high' {
+  return mode === 'fast' ? 'minimal' : 'high'
+}
 
 function turnToMessage(turn: Turn): ChatMessage {
   const content: ContentPart[] = []
@@ -76,6 +115,24 @@ async function parseProxyResponse(res: Response): Promise<unknown> {
   return data
 }
 
+function extractCitations(message: {
+  annotations?: Array<{
+    type?: string
+    url_citation?: { url?: string; title?: string; content?: string }
+  }>
+}): Citation[] {
+  const citations: Citation[] = []
+  for (const ann of message.annotations ?? []) {
+    if (ann?.type !== 'url_citation' || !ann.url_citation?.url) continue
+    citations.push({
+      url: ann.url_citation.url,
+      title: ann.url_citation.title || ann.url_citation.url,
+      content: ann.url_citation.content,
+    })
+  }
+  return citations
+}
+
 function imagesFromChatCompletion(data: unknown): GenerateResult {
   const choice = (data as {
     choices?: Array<{
@@ -83,6 +140,11 @@ function imagesFromChatCompletion(data: unknown): GenerateResult {
         content?: string | ContentPart[]
         images?: Array<{ image_url?: { url?: string } }>
         reasoning?: string
+        reasoning_details?: unknown
+        annotations?: Array<{
+          type?: string
+          url_citation?: { url?: string; title?: string; content?: string }
+        }>
       }
     }>
   })?.choices?.[0]
@@ -102,11 +164,23 @@ function imagesFromChatCompletion(data: unknown): GenerateResult {
       .join('\n')
   }
 
+  const reasoning =
+    typeof message?.reasoning === 'string' && message.reasoning.trim()
+      ? message.reasoning.trim()
+      : undefined
+
+  const citations = message ? extractCitations(message) : []
+
   if (images.length === 0 && !text) {
     throw new Error('The model returned no image. Try a different prompt or model.')
   }
 
-  return { text, images }
+  return {
+    text,
+    images,
+    reasoning,
+    citations: citations.length > 0 ? citations : undefined,
+  }
 }
 
 function imagesFromImageApi(data: unknown): GenerateResult {
@@ -159,6 +233,48 @@ function latestUserReferences(history: Turn[]): Array<{ type: 'image_url'; image
   return []
 }
 
+function buildBananaTools(search: SearchGrounding): unknown[] | undefined {
+  if (search === 'off') return undefined
+
+  // Web + Image Search: prefer Google-native tool shape (NB2 Image Search).
+  // If OpenRouter/upstream rejects it, generateImage falls back to web-only.
+  if (search === 'web-image') {
+    return [
+      {
+        type: 'google_search',
+        search_types: ['web_search', 'image_search'],
+      },
+    ]
+  }
+
+  // Web-only: OpenRouter server tool (native Google search when available).
+  return [
+    {
+      type: 'openrouter:web_search',
+      parameters: {
+        engine: 'native',
+        max_results: 5,
+      },
+    },
+  ]
+}
+
+function withSearchHint(messages: ChatMessage[], search: SearchGrounding): ChatMessage[] {
+  if (search === 'off' || messages.length === 0) return messages
+
+  const hint =
+    search === 'web-image'
+      ? 'Use web search and image search grounding when helpful: look up current facts and accurate visual references before generating the image.'
+      : 'Use web search grounding when helpful: look up current facts before generating the image.'
+
+  // Prepend a light system-style user cue only if the latest user turn has no prior hint.
+  const last = messages[messages.length - 1]
+  if (last.role !== 'user') return messages
+
+  const content: ContentPart[] = [{ type: 'text', text: hint }, ...last.content]
+  return [...messages.slice(0, -1), { ...last, content }]
+}
+
 export async function generateImage(
   settings: Settings,
   history: Turn[],
@@ -169,15 +285,25 @@ export async function generateImage(
     throw new Error('No API key set. Open Settings and paste your OpenRouter API key.')
   }
 
-  const body = {
-    model: settings.model,
-    messages: buildMessages(history),
+  const bananaMode: BananaMode = opts.bananaMode ?? 'thinking'
+  const searchGrounding: SearchGrounding = opts.searchGrounding ?? 'off'
+  const model = bananaModeModelId(bananaMode)
+  const effort = bananaReasoningEffort(bananaMode)
+  const tools = buildBananaTools(searchGrounding)
+  const messages = withSearchHint(buildMessages(history), searchGrounding)
+
+  const body: Record<string, unknown> = {
+    model,
+    messages,
     modalities: ['image', 'text'],
+    reasoning: { effort, exclude: false },
+    reasoning_effort: effort,
     image_config: {
       aspect_ratio: opts.aspectRatio,
       image_size: opts.imageSize,
     },
   }
+  if (tools) body.tools = tools
 
   const res = await fetch('/proxy', {
     method: 'POST',
@@ -186,8 +312,36 @@ export async function generateImage(
     signal,
   })
 
+  // If Image Search native tool is rejected, retry once with web-only search.
+  if (!res.ok && searchGrounding === 'web-image') {
+    const raw = await res.text()
+    let msg = `Request failed with HTTP ${res.status}`
+    try {
+      const parsed = raw ? JSON.parse(raw) : {}
+      msg = (parsed as { error?: { message?: string } })?.error?.message || msg
+    } catch {
+      if (raw) msg = raw.slice(0, 300)
+    }
+    const looksLikeToolError = /tool|google_search|search_types|unsupported/i.test(msg)
+    if (looksLikeToolError) {
+      return generateImage(
+        settings,
+        history,
+        { ...opts, searchGrounding: 'web' },
+        signal,
+      )
+    }
+    throw new Error(msg)
+  }
+
   const data = await parseProxyResponse(res)
-  return imagesFromChatCompletion(data)
+  const result = imagesFromChatCompletion(data)
+  return {
+    ...result,
+    modelUsed: model,
+    bananaMode,
+    searchGrounding,
+  }
 }
 
 /**

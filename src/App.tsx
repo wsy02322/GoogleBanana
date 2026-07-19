@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AspectRatio,
+  BananaMode,
   GptImageMode,
   ImageSize,
+  SearchGrounding,
   Settings,
   SessionsData,
   Turn,
@@ -16,7 +18,14 @@ import {
   createConversation,
   conversationTitle,
 } from './lib/storage'
-import { generateImage, generateGptImage, gptModeLabel, gptModeModelId } from './lib/openrouter'
+import {
+  generateImage,
+  generateGptImage,
+  gptModeLabel,
+  gptModeModelId,
+  bananaModeLabel,
+  bananaModeModelId,
+} from './lib/openrouter'
 import Composer from './components/Composer'
 import Message from './components/Message'
 import SettingsModal from './components/SettingsModal'
@@ -43,9 +52,9 @@ function applyTheme(theme: Settings['theme']) {
 
 const EXAMPLE_PROMPTS = [
   'A photorealistic banana astronaut floating in space, cinematic lighting',
-  'A cozy Scandinavian living room at golden hour, ultra detailed',
+  "Infographic of today's weather in Tokyo with accurate current conditions",
   'Logo for a fruit startup called "GoogleBanana", minimal flat vector',
-  'A watercolor painting of Tokyo streets in the rain at night',
+  'Use image search: a resplendent quetzal bird on a misty branch, natural light',
 ]
 
 const GPT_EXAMPLE_PROMPTS = [
@@ -62,6 +71,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [workspace, setWorkspace] = useState<Workspace>('banana')
   const [gptMode, setGptMode] = useState<GptImageMode>('pro-thinking')
+  const [bananaMode, setBananaMode] = useState<BananaMode>('thinking')
+  const [searchGrounding, setSearchGrounding] = useState<SearchGrounding>('off')
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1')
   const [imageSize, setImageSize] = useState<ImageSize>('1K')
   const [busy, setBusy] = useState(false)
@@ -143,13 +154,42 @@ export default function App() {
   const enterGptWorkspace = () => {
     if (busy) return
     setWorkspace('gpt')
-    // Prefer a stronger default resolution for GPT Image studio.
     setImageSize((prev) => (prev === '1K' ? '2K' : prev))
   }
 
   const leaveGptWorkspace = () => {
     if (busy) return
     setWorkspace('banana')
+  }
+
+  const runBananaGenerate = async (
+    history: Turn[],
+    assistantId: string,
+    mode: BananaMode,
+    search: SearchGrounding,
+  ) => {
+    const result = await generateImage(settings, history, {
+      aspectRatio,
+      imageSize,
+      bananaMode: mode,
+      searchGrounding: search,
+    })
+    updateActiveTurns((prev) =>
+      prev.map((t) =>
+        t.id === assistantId
+          ? {
+              ...t,
+              pending: false,
+              text: result.text,
+              images: result.images,
+              reasoning: result.reasoning,
+              citations: result.citations,
+              bananaMode: result.bananaMode ?? mode,
+              searchGrounding: result.searchGrounding ?? search,
+            }
+          : t,
+      ),
+    )
   }
 
   const send = async (text: string, images: string[]) => {
@@ -162,23 +202,30 @@ export default function App() {
       images: [],
       createdAt: Date.now(),
       pending: true,
+      bananaMode: workspace === 'banana' ? bananaMode : undefined,
+      searchGrounding: workspace === 'banana' ? searchGrounding : undefined,
     }
     const history = [...turns, userTurn]
     updateActiveTurns([...history, assistantTurn])
     setBusy(true)
 
     try {
-      const result =
-        workspace === 'gpt'
-          ? await generateGptImage(settings, history, { aspectRatio, imageSize, mode: gptMode })
-          : await generateImage(settings, history, { aspectRatio, imageSize })
-      updateActiveTurns((prev) =>
-        prev.map((t) =>
-          t.id === assistantTurn.id
-            ? { ...t, pending: false, text: result.text, images: result.images }
-            : t,
-        ),
-      )
+      if (workspace === 'gpt') {
+        const result = await generateGptImage(settings, history, {
+          aspectRatio,
+          imageSize,
+          mode: gptMode,
+        })
+        updateActiveTurns((prev) =>
+          prev.map((t) =>
+            t.id === assistantTurn.id
+              ? { ...t, pending: false, text: result.text, images: result.images }
+              : t,
+          ),
+        )
+      } else {
+        await runBananaGenerate(history, assistantTurn.id, bananaMode, searchGrounding)
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       updateActiveTurns((prev) =>
@@ -189,15 +236,56 @@ export default function App() {
     }
   }
 
+  const redoWithPro = async (assistantTurn: Turn) => {
+    if (busy || workspace !== 'banana' || !activeConversation) return
+    const idx = turns.findIndex((t) => t.id === assistantTurn.id)
+    if (idx <= 0) return
+    const history = turns.slice(0, idx).filter((t) => !t.error && !t.pending)
+
+    const redoTurn: Turn = {
+      id: uid(),
+      role: 'assistant',
+      text: '',
+      images: [],
+      createdAt: Date.now(),
+      pending: true,
+      bananaMode: 'pro',
+      searchGrounding: assistantTurn.searchGrounding ?? searchGrounding,
+    }
+    updateActiveTurns([...turns, redoTurn])
+    setBusy(true)
+    setBananaMode('pro')
+
+    try {
+      await runBananaGenerate(
+        history,
+        redoTurn.id,
+        'pro',
+        assistantTurn.searchGrounding ?? searchGrounding,
+      )
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      updateActiveTurns((prev) =>
+        prev.map((t) => (t.id === redoTurn.id ? { ...t, pending: false, error: message } : t)),
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const toggleTheme = () => {
-    const next: Settings['theme'] = document.documentElement.classList.contains('dark') ? 'light' : 'dark'
+    const next: Settings['theme'] = document.documentElement.classList.contains('dark')
+      ? 'light'
+      : 'dark'
     handleSaveSettings({ ...settings, theme: next })
   }
 
   const isEmpty = turns.length === 0
   const emptyPrompts = workspace === 'gpt' ? GPT_EXAMPLE_PROMPTS : EXAMPLE_PROMPTS
   const modelBadge =
-    workspace === 'gpt' ? `${gptModeLabel(gptMode)} · ${gptModeModelId(gptMode)}` : settings.model || 'no model'
+    workspace === 'gpt'
+      ? `${gptModeLabel(gptMode)} · ${gptModeModelId(gptMode)}`
+      : `${bananaModeLabel(bananaMode)} · ${bananaModeModelId(bananaMode)}`
 
   return (
     <div className="flex h-full bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100">
@@ -296,7 +384,7 @@ export default function App() {
                   ? 'Add your API key in Settings to get started.'
                   : workspace === 'gpt'
                     ? 'Pick Pro Thinking or Direct below, then describe an image.'
-                    : 'Type a prompt below, or attach an image to edit it.'}
+                    : 'Pick Fast / Thinking / Pro, optional search grounding, then describe an image.'}
               </p>
               <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2">
                 {emptyPrompts.map((p) => (
@@ -314,7 +402,12 @@ export default function App() {
           ) : (
             <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6">
               {turns.map((t) => (
-                <Message key={t.id} turn={t} />
+                <Message
+                  key={t.id}
+                  turn={t}
+                  busy={busy}
+                  onRedoWithPro={workspace === 'banana' ? redoWithPro : undefined}
+                />
               ))}
             </div>
           )}
@@ -325,9 +418,13 @@ export default function App() {
             disabled={!hasKey || busy}
             workspace={workspace}
             gptMode={gptMode}
+            bananaMode={bananaMode}
+            searchGrounding={searchGrounding}
             aspectRatio={aspectRatio}
             imageSize={imageSize}
             onChangeGptMode={setGptMode}
+            onChangeBananaMode={setBananaMode}
+            onChangeSearchGrounding={setSearchGrounding}
             onChangeAspectRatio={setAspectRatio}
             onChangeImageSize={setImageSize}
             onSend={send}

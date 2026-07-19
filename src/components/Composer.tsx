@@ -1,5 +1,13 @@
 import { useRef, useState } from 'react'
-import type { AspectRatio, GptImageMode, ImageSize, Workspace } from '../lib/types'
+import type {
+  AspectRatio,
+  BananaMode,
+  GptImageMode,
+  ImageSize,
+  SearchGrounding,
+  Workspace,
+} from '../lib/types'
+import { bananaModeHint } from '../lib/openrouter'
 import { fileToDataUrl } from '../lib/image'
 import { ImageIcon, SendIcon, CloseIcon } from './icons'
 
@@ -7,9 +15,13 @@ interface Props {
   disabled: boolean
   workspace: Workspace
   gptMode: GptImageMode
+  bananaMode: BananaMode
+  searchGrounding: SearchGrounding
   aspectRatio: AspectRatio
   imageSize: ImageSize
   onChangeGptMode: (v: GptImageMode) => void
+  onChangeBananaMode: (v: BananaMode) => void
+  onChangeSearchGrounding: (v: SearchGrounding) => void
   onChangeAspectRatio: (v: AspectRatio) => void
   onChangeImageSize: (v: ImageSize) => void
   onSend: (text: string, images: string[]) => void
@@ -31,13 +43,29 @@ const GPT_MODES: { id: GptImageMode; label: string; hint: string }[] = [
   },
 ]
 
+const BANANA_MODES: { id: BananaMode; label: string }[] = [
+  { id: 'fast', label: 'Fast' },
+  { id: 'thinking', label: 'Thinking' },
+  { id: 'pro', label: 'Pro' },
+]
+
+const SEARCH_OPTIONS: { id: SearchGrounding; label: string; hint: string }[] = [
+  { id: 'off', label: 'No search', hint: 'Offline world knowledge only' },
+  { id: 'web', label: 'Web', hint: 'Google Search grounding' },
+  { id: 'web-image', label: 'Web + Image', hint: 'Web + Image Search grounding (NB2)' },
+]
+
 export default function Composer({
   disabled,
   workspace,
   gptMode,
+  bananaMode,
+  searchGrounding,
   aspectRatio,
   imageSize,
   onChangeGptMode,
+  onChangeBananaMode,
+  onChangeSearchGrounding,
   onChangeAspectRatio,
   onChangeImageSize,
   onSend,
@@ -75,7 +103,7 @@ export default function Composer({
 
   return (
     <div className="mx-auto w-full max-w-3xl">
-      {workspace === 'gpt' && (
+      {workspace === 'gpt' ? (
         <div className="mb-3 flex flex-wrap items-center gap-2">
           {GPT_MODES.map((m) => {
             const active = gptMode === m.id
@@ -86,11 +114,7 @@ export default function Composer({
                 disabled={disabled}
                 onClick={() => onChangeGptMode(m.id)}
                 title={m.hint}
-                className={
-                  active
-                    ? 'rounded-full border border-gray-900 bg-gray-900 px-3 py-1.5 text-xs text-white dark:border-banana-400 dark:bg-banana-400 dark:text-gray-900'
-                    : 'rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-gray-600'
-                }
+                className={pillClass(active)}
               >
                 {m.label}
               </button>
@@ -99,6 +123,49 @@ export default function Composer({
           <span className="text-xs text-gray-400 dark:text-gray-500">
             {GPT_MODES.find((m) => m.id === gptMode)?.hint}
           </span>
+        </div>
+      ) : (
+        <div className="mb-3 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {BANANA_MODES.map((m) => {
+              const active = bananaMode === m.id
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onChangeBananaMode(m.id)}
+                  title={bananaModeHint(m.id)}
+                  className={pillClass(active)}
+                >
+                  {m.label}
+                </button>
+              )
+            })}
+            <span className="text-xs text-gray-400 dark:text-gray-500">
+              {bananaModeHint(bananaMode)}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {SEARCH_OPTIONS.map((s) => {
+              const active = searchGrounding === s.id
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onChangeSearchGrounding(s.id)}
+                  title={s.hint}
+                  className={pillClass(active)}
+                >
+                  {s.label}
+                </button>
+              )
+            })}
+            <span className="text-xs text-gray-400 dark:text-gray-500">
+              {SEARCH_OPTIONS.find((s) => s.id === searchGrounding)?.hint}
+            </span>
+          </div>
         </div>
       )}
 
@@ -171,6 +238,12 @@ export default function Composer({
       </p>
     </div>
   )
+}
+
+function pillClass(active: boolean): string {
+  return active
+    ? 'rounded-full border border-gray-900 bg-gray-900 px-3 py-1.5 text-xs text-white dark:border-banana-400 dark:bg-banana-400 dark:text-gray-900'
+    : 'rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600 hover:border-gray-300 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-gray-600'
 }
 
 function SelectPill({

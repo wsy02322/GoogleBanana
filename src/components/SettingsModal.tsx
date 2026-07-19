@@ -68,7 +68,10 @@ export default function SettingsModal({ settings, onSave, onClose }: Props) {
             />
           </Field>
 
-          <Field label="Model">
+          <Field
+            label="Model"
+            hint="Used as a fallback label in Settings. Banana workspace Fast/Thinking/Pro picks the model automatically; GPT Image has its own modes."
+          >
             <select
               value={modelIsCustom ? '__custom__' : draft.model}
               onChange={(e) => {
