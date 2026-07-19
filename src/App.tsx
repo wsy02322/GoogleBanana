@@ -25,7 +25,6 @@ import {
   generateImage,
   generateGptImage,
   generationAbortSignal,
-  gptModeLabel,
   gptModeModelId,
   bananaModeLabel,
   bananaModeModelId,
@@ -40,8 +39,6 @@ import {
   SettingsIcon,
   SunIcon,
   MoonIcon,
-  SparklesIcon,
-  ArrowLeftIcon,
 } from './components/icons'
 
 function uid(): string {
@@ -364,10 +361,13 @@ export default function App() {
 
   const isEmpty = turns.length === 0
   const emptyPrompts = workspace === 'gpt' ? GPT_EXAMPLE_PROMPTS : EXAMPLE_PROMPTS
-  const modelBadge =
+  const workspaceTitle = workspace === 'gpt' ? 'GPT Image' : 'GoogleBanana'
+  const modeLine =
     workspace === 'gpt'
-      ? `${gptModeLabel(gptMode)} · ${gptModeModelId(gptMode)}`
+      ? `${gptMode === 'pro-thinking' ? 'Pro Thinking' : 'Direct'} · ${gptModeModelId(gptMode)}`
       : `${bananaModeLabel(bananaMode)} · ${bananaModeModelId(bananaMode)}`
+  const switchLabel = workspace === 'gpt' ? 'switch to Banana' : 'switch to ChatGPT'
+  const switchAction = workspace === 'gpt' ? leaveGptWorkspace : enterGptWorkspace
 
   return (
     <div className="flex h-full bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100">
@@ -383,48 +383,45 @@ export default function App() {
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-800">
-          <div className="flex min-w-0 items-center gap-2">
+        <header className="flex items-center justify-between gap-2 border-b border-gray-100 px-3 py-2.5 dark:border-gray-800 sm:px-4 sm:py-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="rounded-full p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 lg:hidden"
+              className="shrink-0 rounded-full p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 lg:hidden"
               aria-label="Open chat history"
               title="Chat history"
             >
               <MenuIcon className="h-5 w-5" />
             </button>
-            {workspace === 'gpt' ? (
-              <button
-                onClick={leaveGptWorkspace}
-                className="rounded-full p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
-                aria-label="Back to nano banana"
-                title="Back to nano banana"
-              >
-                <ArrowLeftIcon className="h-5 w-5" />
-              </button>
-            ) : (
-              <span className="text-2xl">🍌</span>
-            )}
-            <h1 className="truncate text-lg font-semibold">
-              {workspace === 'gpt' ? 'GPT Image' : 'GoogleBanana'}
-            </h1>
-            <span className="hidden max-w-[14rem] truncate rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500 sm:inline dark:bg-gray-800 dark:text-gray-400 lg:max-w-xs">
-              {modelBadge}
+
+            <span className="shrink-0 text-xl sm:text-2xl" aria-hidden>
+              {workspace === 'gpt' ? '✨' : '🍌'}
             </span>
-          </div>
-          <div className="flex items-center gap-1">
-            {workspace === 'banana' && (
+
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <h1 className="truncate text-base font-semibold sm:text-lg">{workspaceTitle}</h1>
+                <span
+                  className="max-w-full truncate text-xs text-gray-500 dark:text-gray-400 sm:text-sm"
+                  title={modeLine}
+                >
+                  {modeLine}
+                </span>
+              </div>
               <button
-                onClick={enterGptWorkspace}
+                type="button"
+                onClick={switchAction}
                 disabled={busy}
-                className="flex items-center gap-1.5 rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:border-gray-300 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-200 dark:hover:border-gray-600 dark:hover:bg-gray-900"
-                aria-label="Open GPT Image studio"
-                title="GPT Image · Pro Thinking / Direct"
+                className="mt-0.5 text-left text-xs font-medium text-banana-600 underline-offset-2 hover:underline disabled:opacity-50 dark:text-banana-400"
+                aria-label={switchLabel}
+                title={switchLabel}
               >
-                <SparklesIcon className="h-4 w-4" />
-                <span className="hidden sm:inline">GPT Image</span>
+                ({switchLabel})
               </button>
-            )}
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
             <button
               onClick={newChat}
               className="rounded-full p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
