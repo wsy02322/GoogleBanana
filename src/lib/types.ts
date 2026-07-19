@@ -18,6 +18,58 @@ export type Workspace = 'banana' | 'gpt'
  */
 export type GptImageMode = 'pro-thinking' | 'direct'
 
+/**
+ * Gemini app–style image intelligence lanes:
+ * - fast: Nano Banana 2 with minimal thinking
+ * - thinking: Nano Banana 2 with high thinking
+ * - pro: Nano Banana Pro (highest fidelity)
+ */
+export type BananaMode = 'fast' | 'thinking' | 'pro'
+
+/** Grounding / search for banana image generation */
+export type SearchGrounding = 'off' | 'web' | 'web-image'
+
+export interface Citation {
+  url: string
+  title: string
+  content?: string
+}
+
+/**
+ * Compact per-turn report so users can see whether intelligence features
+ * actually engaged (vs requested but silent / fell back).
+ *
+ * Search evidence is intentionally graded — we can prove citations entered the
+ * *response*, but the API does not expose whether those results changed pixels.
+ */
+export interface CapabilityReport {
+  mode: BananaMode
+  model: string
+  /** Whether the API returned visible reasoning text */
+  thinking: 'returned' | 'not_returned' | 'minimal'
+  /** What the user asked for */
+  searchRequested: SearchGrounding
+  /** What was actually used after any fallback */
+  searchUsed: SearchGrounding
+  /** True when Web+Image was requested but only Web could be used */
+  searchFallback?: boolean
+  /**
+   * Strongest verifiable search evidence from the API response:
+   * - off: not requested
+   * - fallback: native image-search tool rejected; retried as web
+   * - none: requested, but no search calls and no citations
+   * - called: upstream reported search tool calls, but no citations
+   * - cited: url_citation annotations present (results entered the reply)
+   */
+  searchEvidence: 'off' | 'fallback' | 'none' | 'called' | 'cited'
+  /** Number of url_citation annotations returned */
+  citationCount: number
+  /** Upstream web_search_requests if reported in usage */
+  searchCalls?: number
+  /** Image generated successfully */
+  imageOk: boolean
+}
+
 export interface Turn {
   id: string
   role: 'user' | 'assistant'
@@ -26,6 +78,12 @@ export interface Turn {
   createdAt: number
   pending?: boolean
   error?: string
+  /** Banana intelligence metadata (assistant turns) */
+  bananaMode?: BananaMode
+  searchGrounding?: SearchGrounding
+  reasoning?: string
+  citations?: Citation[]
+  capability?: CapabilityReport
 }
 
 export interface Conversation {
