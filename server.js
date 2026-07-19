@@ -23,6 +23,9 @@ const isProd = process.env.NODE_ENV === 'production'
 /** Allowed relative paths under the OpenRouter-style base URL. */
 const ALLOWED_PATHS = new Set(['chat/completions', 'images'])
 
+/** Send whitespace over chunked encoding so mobile networks don't drop idle waits. */
+const HEARTBEAT_MS = 15_000
+
 const app = express()
 app.use(express.json({ limit: '50mb' }))
 
@@ -46,6 +49,31 @@ function sanitizePath(raw) {
   if (!raw || typeof raw !== 'string') return fallback
   const cleaned = raw.trim().replace(/^\/+/, '').replace(/\/+$/, '')
   return ALLOWED_PATHS.has(cleaned) ? cleaned : null
+}
+
+function armSocketTimeouts(req, res, timeoutMs) {
+  const socketMs = timeoutMs + 60_000
+  req.socket?.setKeepAlive?.(true, HEARTBEAT_MS)
+  req.socket?.setTimeout?.(socketMs)
+  res.setTimeout(socketMs)
+}
+
+/** Begin a chunked JSON response and emit padding until upstream finishes. */
+function startProxyKeepAlive(res) {
+  res.statusCode = 200
+  res.setHeader('Content-Type', 'application/json; charset=utf-8')
+  res.setHeader('Transfer-Encoding', 'chunked')
+  res.setHeader('Connection', 'close')
+  res.setHeader('Cache-Control', 'no-cache, no-transform')
+  res.setHeader('X-Accel-Buffering', 'no')
+  // First byte immediately so proxies see an active response (GPT can take 2+ min).
+  res.write(' ')
+
+  const interval = setInterval(() => {
+    if (!res.writableEnded) res.write(' ')
+  }, HEARTBEAT_MS)
+
+  return () => clearInterval(interval)
 }
 
 app.post('/proxy', async (req, res) => {
@@ -75,16 +103,13 @@ app.post('/proxy', async (req, res) => {
   if (referer) headers['HTTP-Referer'] = referer
   if (title) headers['X-Title'] = title
 
-  // Guard against indefinitely hanging upstream requests. Image generation can
-  // take a while, so allow a generous window.
   const timeoutMs = Number(process.env.PROXY_TIMEOUT_MS) || 600000
+  armSocketTimeouts(req, res, timeoutMs)
 
+  let stopHeartbeat = null
   try {
-    // Buffer the full upstream body instead of piping. GPT image models can
-    // think for minutes and OpenRouter may send keep-alive padding first; an
-    // unhandled mid-stream abort on .pipe(res) can leave the browser hung on
-    // "Generating image…" forever. Awaiting the body keeps AbortSignal.timeout
-    // covering headers + body and always yields a finished HTTP response.
+    stopHeartbeat = startProxyKeepAlive(res)
+
     const upstream = await fetch(target, {
       method: 'POST',
       headers,
@@ -93,28 +118,35 @@ app.post('/proxy', async (req, res) => {
     })
 
     const buf = Buffer.from(await upstream.arrayBuffer())
-    if (!res.headersSent) {
-      res.status(upstream.status)
-      res.set('Content-Type', upstream.headers.get('content-type') || 'application/json')
-      res.set('Content-Length', String(buf.length))
-      // Avoid keep-alive quirks with large base64 image payloads on mobile browsers.
-      res.set('Connection', 'close')
-      res.send(buf)
+    stopHeartbeat()
+    stopHeartbeat = null
+
+    if (!upstream.ok) {
+      console.warn(`[proxy] upstream HTTP ${upstream.status} (${buf.length} bytes) → ${target}`)
+    } else {
+      console.log(`[proxy] upstream OK (${buf.length} bytes) → ${target}`)
     }
+
+    res.write(buf)
+    res.end()
   } catch (err) {
+    if (stopHeartbeat) stopHeartbeat()
     console.error('[proxy]', err?.name || 'Error', err?.message || err)
+
+    const message =
+      err?.name === 'TimeoutError' || err?.cause?.name === 'TimeoutError'
+        ? `Upstream request timed out after ${timeoutMs}ms. Image generation can take several minutes — try 1K size or raise PROXY_TIMEOUT_MS.`
+        : `Upstream request failed: ${err?.message || String(err)}`
+
     if (res.headersSent) {
       try {
+        res.write(JSON.stringify({ error: { message } }))
         res.end()
       } catch {
         // ignore double-end
       }
       return
     }
-    const message =
-      err?.name === 'TimeoutError' || err?.cause?.name === 'TimeoutError'
-        ? `Upstream request timed out after ${timeoutMs}ms. GPT Pro Thinking can take several minutes — try Direct mode or a smaller size (1K), or raise PROXY_TIMEOUT_MS.`
-        : `Upstream request failed: ${err?.message || String(err)}`
     res.status(502).json({ error: { message } })
   }
 })
@@ -129,7 +161,12 @@ if (isProd) {
   app.get('*', (_req, res) => res.sendFile(path.join(distDir, 'index.html')))
 }
 
-app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST, () => {
   const mode = isProd ? 'production (serving dist/ + proxy)' : 'dev proxy'
   console.log(`GoogleBanana ${mode} listening on http://${HOST}:${PORT}`)
 })
+
+// Long image jobs (GPT Direct / Pro Thinking) can run several minutes end-to-end.
+server.keepAliveTimeout = 650_000
+server.headersTimeout = 650_000
+if (typeof server.requestTimeout === 'number') server.requestTimeout = 650_000

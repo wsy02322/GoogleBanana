@@ -266,10 +266,14 @@ export default function App() {
       }
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err)
-      const message =
+      let message =
         err instanceof Error && err.name === 'TimeoutError'
           ? 'Request timed out after 10 minutes. Try Direct mode, or lower size to 1K.'
           : raw
+      if (raw === 'Failed to fetch' || (err instanceof TypeError && /fetch/i.test(raw))) {
+        message =
+          'Connection lost while waiting for the image (common on mobile after ~2 minutes). Update to the latest server build, stay on this page, or retry on Wi‑Fi.'
+      }
       updateActiveTurns((prev) =>
         prev.map((t) => (t.id === assistantTurn.id ? { ...t, pending: false, error: message } : t)),
       )
