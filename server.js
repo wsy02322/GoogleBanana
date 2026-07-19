@@ -93,11 +93,16 @@ app.post('/proxy', async (req, res) => {
     })
 
     const buf = Buffer.from(await upstream.arrayBuffer())
-    res.status(upstream.status)
-    const contentType = upstream.headers.get('content-type')
-    if (contentType) res.set('content-type', contentType)
-    res.send(buf)
+    if (!res.headersSent) {
+      res.status(upstream.status)
+      res.set('Content-Type', upstream.headers.get('content-type') || 'application/json')
+      res.set('Content-Length', String(buf.length))
+      // Avoid keep-alive quirks with large base64 image payloads on mobile browsers.
+      res.set('Connection', 'close')
+      res.send(buf)
+    }
   } catch (err) {
+    console.error('[proxy]', err?.name || 'Error', err?.message || err)
     if (res.headersSent) {
       try {
         res.end()
