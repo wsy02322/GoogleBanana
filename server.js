@@ -14,6 +14,7 @@ import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
+import { createJobStore } from './jobs.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -35,7 +36,11 @@ const HEARTBEAT_MS = Number(process.env.PROXY_HEARTBEAT_MS) || 8_000
 const app = express()
 app.use(express.json({ limit: '50mb' }))
 
-app.get('/healthz', (_req, res) => res.json({ ok: true }))
+const jobStore = createJobStore(__dirname)
+
+app.get('/healthz', (_req, res) =>
+  res.json({ ok: true, jobCacheMax: jobStore.maxJobs }),
+)
 
 function sanitizeBaseUrl(raw) {
   if (!raw || typeof raw !== 'string') return null
@@ -229,6 +234,63 @@ app.post('/proxy', async (req, res) => {
   }
 })
 
+/**
+ * Async generation jobs: browser can disconnect; reclaim via GET /jobs/:id.
+ * Keeps only the newest JOB_CACHE_MAX (default 10) results on disk.
+ */
+app.post('/jobs', (req, res) => {
+  const baseUrl = sanitizeBaseUrl(req.get('x-or-base-url'))
+  const auth = req.get('authorization')
+  const apiPath = sanitizePath(req.get('x-or-path'))
+
+  if (!baseUrl) {
+    return res.status(400).json({ error: { message: 'Missing or invalid X-OR-Base-URL header.' } })
+  }
+  if (!auth) {
+    return res.status(401).json({
+      error: { message: 'Missing Authorization header. Set your API key in Settings.' },
+    })
+  }
+  if (!apiPath) {
+    return res.status(400).json({
+      error: { message: `Invalid X-OR-Path. Allowed: ${[...ALLOWED_PATHS].join(', ')}` },
+    })
+  }
+
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: auth,
+  }
+  const referer = req.get('x-or-referer')
+  const title = req.get('x-or-title')
+  if (referer) headers['HTTP-Referer'] = referer
+  if (title) headers['X-Title'] = title
+
+  const timeoutMs = Number(process.env.PROXY_TIMEOUT_MS) || 600000
+  const job = jobStore.createJob({
+    target: `${baseUrl}/${apiPath}`,
+    apiPath,
+    headers,
+    body: req.body,
+    timeoutMs,
+  })
+
+  res.status(202).json(job)
+})
+
+app.get('/jobs/:id', (req, res) => {
+  const job = jobStore.getJob(req.params.id, { includeData: true })
+  if (!job) {
+    return res.status(404).json({
+      error: {
+        message:
+          'Job not found. The server only keeps the newest 10 results; this one may have expired.',
+      },
+    })
+  }
+  res.json(job)
+})
+
 if (isProd) {
   const distDir = path.join(__dirname, 'dist')
   if (!fs.existsSync(distDir)) {
@@ -242,6 +304,7 @@ if (isProd) {
 const server = app.listen(PORT, HOST, () => {
   const mode = isProd ? 'production (serving dist/ + proxy)' : 'dev proxy'
   console.log(`GoogleBanana ${mode} listening on http://${HOST}:${PORT}`)
+  console.log(`[jobs] cache dir ${jobStore.jobsDir} (max ${jobStore.maxJobs})`)
 })
 
 // Long image jobs (GPT Direct / Pro Thinking) can run several minutes end-to-end.

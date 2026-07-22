@@ -54,7 +54,8 @@ export default function Message({ turn, busy, onRedoWithPro }: Props) {
             <div className="min-w-0">
               <p className="text-sm text-gray-600 dark:text-gray-300">{pendingLabel}</p>
               <p className="mt-1 text-xs leading-snug text-gray-500 dark:text-gray-400">
-                Switching Banana / ChatGPT keeps this running. Closing the tab cancels it.
+                Running on the server. You can switch workspaces or close this tab — reopen to claim
+                the result (newest 10 kept briefly).
               </p>
             </div>
           </div>

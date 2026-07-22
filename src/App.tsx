@@ -25,11 +25,16 @@ import {
   saveWorkspaceImagePreferences,
   createConversation,
   conversationTitle,
+  loadPendingServerJobs,
+  upsertPendingServerJob,
+  removePendingServerJob,
 } from './lib/storage'
 import {
   generateImage,
   generateGptImage,
-  generationAbortSignal,
+  waitForServerJob,
+  resultFromChatCompletion,
+  resultFromImageApi,
   gptModeModelId,
   bananaModeLabel,
   bananaModeModelId,
@@ -159,6 +164,89 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    if (!sessionsReady) return
+
+    let cancelled = false
+    const controllers: AbortController[] = []
+
+    const applyJobResult = (
+      ws: Workspace,
+      conversationId: string,
+      assistantTurnId: string,
+      apiPath: 'chat/completions' | 'images',
+      data: unknown,
+    ) => {
+      const parsed =
+        apiPath === 'images' ? resultFromImageApi(data) : resultFromChatCompletion(data)
+      updateConversationTurns(ws, conversationId, (prev) =>
+        prev.map((t) =>
+          t.id === assistantTurnId
+            ? {
+                ...t,
+                pending: false,
+                error: undefined,
+                text: parsed.text,
+                images: parsed.images,
+                reasoning: parsed.reasoning,
+              }
+            : t,
+        ),
+      )
+    }
+
+    const resumeOne = async (job: ReturnType<typeof loadPendingServerJobs>[number]) => {
+      const ac = new AbortController()
+      controllers.push(ac)
+      setWorkspaceJob(job.workspace, job.conversationId)
+      updateConversationTurns(job.workspace, job.conversationId, (prev) =>
+        prev.map((t) =>
+          t.id === job.assistantTurnId
+            ? { ...t, pending: true, error: undefined, serverJobId: job.jobId }
+            : t,
+        ),
+      )
+
+      try {
+        const { apiPath, data } = await waitForServerJob(job.jobId, ac.signal)
+        if (cancelled) return
+        applyJobResult(job.workspace, job.conversationId, job.assistantTurnId, apiPath, data)
+        removePendingServerJob(job.jobId)
+      } catch (err) {
+        if (cancelled || ac.signal.aborted) return
+        const message = err instanceof Error ? err.message : String(err)
+        updateConversationTurns(job.workspace, job.conversationId, (prev) =>
+          prev.map((t) =>
+            t.id === job.assistantTurnId ? { ...t, pending: false, error: message } : t,
+          ),
+        )
+        removePendingServerJob(job.jobId)
+      } finally {
+        if (!cancelled) {
+          setActiveJobs((prev) =>
+            prev[job.workspace] === job.conversationId
+              ? { ...prev, [job.workspace]: undefined }
+              : prev,
+          )
+        }
+      }
+    }
+
+    const pending = loadPendingServerJobs()
+    void (async () => {
+      for (const job of pending) {
+        if (cancelled) return
+        await resumeOne(job)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      for (const ac of controllers) ac.abort()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionsReady])
+
   const hasKey = useMemo(() => settings.apiKey.trim().length > 0, [settings.apiKey])
 
   const updateWorkspaceBucket = (
@@ -232,6 +320,24 @@ export default function App() {
     setWorkspace('banana')
   }
 
+  const trackServerJob = (
+    jobId: string,
+    ws: Workspace,
+    conversationId: string,
+    assistantTurnId: string,
+  ) => {
+    upsertPendingServerJob({
+      jobId,
+      workspace: ws,
+      conversationId,
+      assistantTurnId,
+      createdAt: Date.now(),
+    })
+    updateConversationTurns(ws, conversationId, (prev) =>
+      prev.map((t) => (t.id === assistantTurnId ? { ...t, serverJobId: jobId } : t)),
+    )
+  }
+
   const runBananaGenerate = async (
     ws: Workspace,
     conversationId: string,
@@ -248,22 +354,27 @@ export default function App() {
         imageSize: preferences.imageSize,
         bananaMode: mode,
       },
-      generationAbortSignal(),
+      {
+        onJobStarted: (jobId) => trackServerJob(jobId, ws, conversationId, assistantId),
+      },
     )
-    updateConversationTurns(ws, conversationId, (prev) =>
-      prev.map((t) =>
+    updateConversationTurns(ws, conversationId, (prev) => {
+      const jobId = prev.find((t) => t.id === assistantId)?.serverJobId
+      if (jobId) removePendingServerJob(jobId)
+      return prev.map((t) =>
         t.id === assistantId
           ? {
               ...t,
               pending: false,
+              error: undefined,
               text: result.text,
               images: result.images,
               reasoning: result.reasoning,
               bananaMode: result.bananaMode ?? mode,
             }
           : t,
-      ),
-    )
+      )
+    })
   }
 
   const send = async (text: string, images: string[]) => {
@@ -297,22 +408,28 @@ export default function App() {
             imageQuality: jobPreferences.imageQuality,
             mode: gptMode,
           },
-          generationAbortSignal(),
+          {
+            onJobStarted: (jobId) =>
+              trackServerJob(jobId, jobWorkspace, jobConversationId, assistantTurn.id),
+          },
         )
-        updateConversationTurns(jobWorkspace, jobConversationId, (prev) =>
-          prev.map((t) =>
+        updateConversationTurns(jobWorkspace, jobConversationId, (prev) => {
+          const jobId = prev.find((t) => t.id === assistantTurn.id)?.serverJobId
+          if (jobId) removePendingServerJob(jobId)
+          return prev.map((t) =>
             t.id === assistantTurn.id
               ? {
                   ...t,
                   pending: false,
+                  error: undefined,
                   text: result.text,
                   images: result.images,
                   reasoning: result.reasoning,
                   gptMode,
                 }
               : t,
-          ),
-        )
+          )
+        })
       } else {
         await runBananaGenerate(
           jobWorkspace,
@@ -324,6 +441,7 @@ export default function App() {
         )
       }
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return
       const raw = err instanceof Error ? err.message : String(err)
       let message =
         err instanceof Error && err.name === 'TimeoutError'
@@ -331,7 +449,7 @@ export default function App() {
           : raw
       if (raw === 'Failed to fetch' || (err instanceof TypeError && /fetch/i.test(raw))) {
         message =
-          'Connection lost while waiting for the image. OpenRouter may still finish (and charge) even when this tab drops. Keep the tab open, prefer Wi‑Fi for Pro Thinking / large sizes, then retry.'
+          'Lost connection while claiming the result. Reopen this page to reclaim it if the server job still finished (last 10 results are kept briefly).'
       }
       updateConversationTurns(jobWorkspace, jobConversationId, (prev) =>
         prev.map((t) => (t.id === assistantTurn.id ? { ...t, pending: false, error: message } : t)),
@@ -372,6 +490,7 @@ export default function App() {
         imagePreferences[jobWorkspace],
       )
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return
       const message = err instanceof Error ? err.message : String(err)
       updateConversationTurns(jobWorkspace, jobConversationId, (prev) =>
         prev.map((t) => (t.id === redoTurn.id ? { ...t, pending: false, error: message } : t)),
@@ -455,15 +574,15 @@ export default function App() {
                 onClick={switchAction}
                 className="mt-0.5 text-left text-xs font-medium text-banana-600 underline-offset-2 hover:underline dark:text-banana-400"
                 aria-label={switchLabel}
-                title="Switching workspaces keeps generation running. Closing this tab cancels it."
+                title="Switching workspaces keeps generation running. Closing this tab is OK — reopen to claim the result (server keeps the newest 10)."
               >
                 ({switchLabel})
               </button>
               {(busy || otherBusy) && (
                 <p className="mt-0.5 text-[11px] leading-snug text-amber-700 dark:text-amber-300">
                   {otherBusy
-                    ? 'Generation continues in the other workspace — result saves there. Closing this tab cancels it.'
-                    : 'You can switch workspaces — generation keeps running. Closing this tab cancels it.'}
+                    ? 'Generation continues in the other workspace — result saves there. You can close this tab and reopen to claim it.'
+                    : 'You can switch workspaces or close this tab — generation keeps running on the server. Reopen to claim the result.'}
                 </p>
               )}
             </div>

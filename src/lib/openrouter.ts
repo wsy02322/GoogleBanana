@@ -121,47 +121,134 @@ function proxyHeaders(settings: Settings, apiPath: 'chat/completions' | 'images'
   }
 }
 
-async function parseProxyResponse(res: Response): Promise<unknown> {
-  const raw = await res.text()
-  let data: unknown
-  try {
-    data = raw ? parsePossiblyPaddedJson(raw) : {}
-  } catch {
-    throw new Error(`Unexpected response (HTTP ${res.status}): ${raw.slice(0, 300)}`)
+export interface GenerateRequestOptions {
+  /** Optional. Aborting only stops local polling — the server job keeps running. */
+  signal?: AbortSignal
+  /** Called once the server accepts the async job (survives tab close). */
+  onJobStarted?: (jobId: string) => void
+}
+
+const JOB_POLL_MS = 2_000
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Polling aborted', 'AbortError'))
+      return
+    }
+    const timer = setTimeout(resolve, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(new DOMException('Polling aborted', 'AbortError'))
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/** Poll a server job until done/error. Safe to call again after reopening the tab. */
+export async function waitForServerJob(
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<{ apiPath: 'chat/completions' | 'images'; data: unknown }> {
+  for (;;) {
+    if (signal?.aborted) throw new DOMException('Polling aborted', 'AbortError')
+
+    try {
+      const res = await fetch(`/jobs/${encodeURIComponent(jobId)}`, { signal })
+      const payload = (await res.json().catch(() => ({}))) as {
+        status?: string
+        apiPath?: string
+        data?: unknown
+        error?: { message?: string } | string
+      }
+
+      if (res.status === 404) {
+        throw new Error(
+          'Job not found. The server only keeps the newest 10 results; this one may have expired.',
+        )
+      }
+
+      if (!res.ok) {
+        const msg =
+          typeof payload.error === 'string'
+            ? payload.error
+            : payload.error?.message || `Job status failed (HTTP ${res.status})`
+        throw new Error(msg)
+      }
+
+      if (payload.status === 'done') {
+        const apiPath =
+          payload.apiPath === 'images' ? 'images' : ('chat/completions' as const)
+        return { apiPath, data: payload.data }
+      }
+
+      if (payload.status === 'error') {
+        const msg =
+          typeof payload.error === 'string'
+            ? payload.error
+            : payload.error?.message || 'Generation job failed'
+        throw new Error(msg)
+      }
+    } catch (err) {
+      if (signal?.aborted) throw err
+      if (err instanceof Error && err.name === 'AbortError') throw err
+      // Fatal job errors should surface; transient network blips retry.
+      if (
+        err instanceof Error &&
+        !/Failed to fetch|NetworkError|Load failed|fetch/i.test(err.message) &&
+        err.name !== 'TypeError'
+      ) {
+        throw err
+      }
+    }
+
+    await sleep(JOB_POLL_MS, signal)
   }
-
-  if (!res.ok) {
-    const msg =
-      (data as { error?: { message?: string } })?.error?.message ||
-      `Request failed with HTTP ${res.status}`
-    throw new Error(msg)
-  }
-
-  const proxiedError = (data as { error?: { message?: string } })?.error?.message
-  if (proxiedError) throw new Error(proxiedError)
-
-  return data
 }
 
 /**
- * OpenRouter may prepend keep-alive whitespace or SSE-style comment lines
- * before the JSON object. JSON.parse allows whitespace, but not `: ping` lines.
+ * Submit generation as a server-side job, then poll for the result.
+ * Closing the browser tab does not cancel the server job.
  */
-function parsePossiblyPaddedJson(raw: string): unknown {
-  const trimmed = raw.trim()
-  if (!trimmed) return {}
-  try {
-    return JSON.parse(trimmed)
-  } catch {
-    const start = trimmed.search(/[{[]/)
-    if (start <= 0) throw new Error('Response is not JSON')
-    return JSON.parse(trimmed.slice(start))
+async function requestViaServerJob(
+  settings: Settings,
+  apiPath: 'chat/completions' | 'images',
+  body: Record<string, unknown>,
+  opts?: GenerateRequestOptions,
+): Promise<unknown> {
+  const res = await fetch('/jobs', {
+    method: 'POST',
+    headers: proxyHeaders(settings, apiPath),
+    body: JSON.stringify(body),
+    signal: opts?.signal,
+  })
+
+  const payload = (await res.json().catch(() => ({}))) as {
+    id?: string
+    error?: { message?: string }
   }
+
+  if (!res.ok) {
+    throw new Error(payload.error?.message || `Failed to start job (HTTP ${res.status})`)
+  }
+  if (!payload.id) throw new Error('Server did not return a job id.')
+
+  opts?.onJobStarted?.(payload.id)
+  const { data } = await waitForServerJob(payload.id, opts?.signal)
+  return data
 }
 
-/** Client abort matching the proxy window (PROXY_TIMEOUT_MS, default 10 min). */
+/** @deprecated Prefer server jobs; kept for compatibility. */
 export function generationAbortSignal(timeoutMs = 600_000): AbortSignal {
   return AbortSignal.timeout(timeoutMs)
+}
+
+export function resultFromChatCompletion(data: unknown): GenerateResult {
+  return imagesFromChatCompletion(data)
+}
+
+export function resultFromImageApi(data: unknown): GenerateResult {
+  return imagesFromImageApi(data)
 }
 
 function imagesFromChatCompletion(data: unknown): GenerateResult {
@@ -286,16 +373,16 @@ export async function generateImage(
   settings: Settings,
   history: Turn[],
   opts: GenerateOptions,
-  signal?: AbortSignal,
+  requestOpts?: GenerateRequestOptions,
 ): Promise<GenerateResult> {
-  return generateBananaImage(settings, history, opts, signal)
+  return generateBananaImage(settings, history, opts, requestOpts)
 }
 
 async function generateBananaImage(
   settings: Settings,
   history: Turn[],
   opts: GenerateOptions,
-  signal?: AbortSignal,
+  requestOpts?: GenerateRequestOptions,
 ): Promise<GenerateResult> {
   if (!settings.apiKey.trim()) {
     throw new Error('No API key set. Open Settings and paste your OpenRouter API key.')
@@ -318,14 +405,7 @@ async function generateBananaImage(
     },
   }
 
-  const res = await fetch('/proxy', {
-    method: 'POST',
-    headers: proxyHeaders(settings, 'chat/completions'),
-    body: JSON.stringify(body),
-    signal,
-  })
-
-  const data = await parseProxyResponse(res)
+  const data = await requestViaServerJob(settings, 'chat/completions', body, requestOpts)
   const result = imagesFromChatCompletion(data)
 
   return {
@@ -343,7 +423,7 @@ async function generateProThinking(
   settings: Settings,
   history: Turn[],
   opts: GenerateOptions,
-  signal?: AbortSignal,
+  requestOpts?: GenerateRequestOptions,
 ): Promise<GenerateResult> {
   const body = {
     model: GPT_PRO_THINKING_MODEL,
@@ -359,14 +439,7 @@ async function generateProThinking(
     },
   }
 
-  const res = await fetch('/proxy', {
-    method: 'POST',
-    headers: proxyHeaders(settings, 'chat/completions'),
-    body: JSON.stringify(body),
-    signal,
-  })
-
-  const data = await parseProxyResponse(res)
+  const data = await requestViaServerJob(settings, 'chat/completions', body, requestOpts)
   return imagesFromChatCompletion(data)
 }
 
@@ -380,7 +453,7 @@ async function generateDirectGptImage2(
   settings: Settings,
   history: Turn[],
   opts: GenerateOptions,
-  signal?: AbortSignal,
+  requestOpts?: GenerateRequestOptions,
 ): Promise<GenerateResult> {
   const input_references = latestUserReferences(history)
   const body: Record<string, unknown> = {
@@ -404,14 +477,7 @@ async function generateDirectGptImage2(
     body.input_references = input_references
   }
 
-  const res = await fetch('/proxy', {
-    method: 'POST',
-    headers: proxyHeaders(settings, 'images'),
-    body: JSON.stringify(body),
-    signal,
-  })
-
-  const data = await parseProxyResponse(res)
+  const data = await requestViaServerJob(settings, 'images', body, requestOpts)
   return imagesFromImageApi(data)
 }
 
@@ -419,16 +485,16 @@ export async function generateGptImage(
   settings: Settings,
   history: Turn[],
   opts: GenerateOptions & { mode: GptImageMode },
-  signal?: AbortSignal,
+  requestOpts?: GenerateRequestOptions,
 ): Promise<GenerateResult> {
   if (!settings.apiKey.trim()) {
     throw new Error('No API key set. Open Settings and paste your OpenRouter API key.')
   }
 
   if (opts.mode === 'pro-thinking') {
-    return generateProThinking(settings, history, opts, signal)
+    return generateProThinking(settings, history, opts, requestOpts)
   }
-  return generateDirectGptImage2(settings, history, opts, signal)
+  return generateDirectGptImage2(settings, history, opts, requestOpts)
 }
 
 export function gptModeLabel(mode: GptImageMode): string {

@@ -4,6 +4,7 @@ import type {
   ImagePreferences,
   ImageQuality,
   ImageSize,
+  PendingServerJob,
   SessionBucket,
   Settings,
   Turn,
@@ -30,6 +31,7 @@ const SESSIONS_KEY = 'googlebanana.sessions.v2'
 const UI_KEY = 'googlebanana.ui.v1'
 const LEGACY_HISTORY_KEY = 'googlebanana.history.v1'
 const SESSIONS_BACKEND_KEY = 'googlebanana.sessions.backend.v1'
+const PENDING_JOBS_KEY = 'googlebanana.pendingJobs.v1'
 
 export const DEFAULT_MODEL = 'google/gemini-3-pro-image'
 
@@ -647,4 +649,43 @@ export function loadLastWorkspace(): Workspace {
 
 export function saveLastWorkspace(workspace: Workspace): void {
   saveUiState({ ...loadUiState(), workspace })
+}
+
+export function loadPendingServerJobs(): PendingServerJob[] {
+  try {
+    const raw = localStorage.getItem(PENDING_JOBS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is PendingServerJob => {
+      if (!item || typeof item !== 'object') return false
+      const job = item as PendingServerJob
+      return (
+        typeof job.jobId === 'string' &&
+        (job.workspace === 'banana' || job.workspace === 'gpt') &&
+        typeof job.conversationId === 'string' &&
+        typeof job.assistantTurnId === 'string'
+      )
+    })
+  } catch {
+    return []
+  }
+}
+
+export function savePendingServerJobs(jobs: PendingServerJob[]): void {
+  try {
+    localStorage.setItem(PENDING_JOBS_KEY, JSON.stringify(jobs.slice(-20)))
+  } catch {
+    // ignore
+  }
+}
+
+export function upsertPendingServerJob(job: PendingServerJob): void {
+  const current = loadPendingServerJobs().filter((j) => j.jobId !== job.jobId)
+  current.push(job)
+  savePendingServerJobs(current)
+}
+
+export function removePendingServerJob(jobId: string): void {
+  savePendingServerJobs(loadPendingServerJobs().filter((j) => j.jobId !== jobId))
 }

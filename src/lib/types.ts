@@ -53,6 +53,8 @@ export interface Turn {
   bananaMode?: BananaMode
   /** GPT Image studio mode (assistant turns) */
   gptMode?: GptImageMode
+  /** Server async job id — survives tab close; reclaim via GET /jobs/:id */
+  serverJobId?: string
   reasoning?: string
   /** @deprecated Kept optional so older localStorage chats still load. */
   searchGrounding?: string
@@ -83,6 +85,15 @@ export interface SessionBucket {
 export interface WorkspaceSessions {
   banana: SessionBucket
   gpt: SessionBucket
+}
+
+/** Browser bookmark for a server-side generation job (reclaim after tab close). */
+export interface PendingServerJob {
+  jobId: string
+  workspace: Workspace
+  conversationId: string
+  assistantTurnId: string
+  createdAt: number
 }
 
 /** @deprecated Use SessionBucket / WorkspaceSessions — kept for migration typing. */
