@@ -31,10 +31,12 @@ There is one runnable unit, started together by `npm run dev`:
   (`PROXY_HEARTBEAT_MS`) only while waiting for the first upstream body byte,
   then **streams** the upstream payload to the browser with write backpressure
   so large GPT image JSON does not stall or drop mid-transfer on mobile NATs.
-- Prefer `POST /jobs` + `GET /jobs/:id` for image generation. The server runs the
-  upstream request even if the browser tab closes, stores the newest
-  `JOB_CACHE_MAX` (default 10) results under `data/jobs/`, and never writes the
-  API key to disk. The legacy `POST /proxy` path remains for debugging.
+- Prefer `POST /jobs` then `POST /jobs/:id/run` + `GET /jobs/:id` for image
+  generation. Phase 1 reserves a job id/claim token so the browser can bookmark
+  before uploading a large body. The server runs the upstream request even if
+  the browser tab closes, stores the newest `JOB_CACHE_MAX` (default 10) results
+  under `data/jobs/`, and never writes the API key to disk. Claim tokens are
+  required to read results. The legacy `POST /proxy` path remains for debugging.
 - Real image generation requires a valid OpenRouter key. `google/gemini-3-pro-image`
   is the default Banana model (~20s per image); `google/gemini-3.1-flash-image` is
   faster (~7s). GPT **Pro Thinking** (`openai/gpt-5.4-image-2` + high reasoning)

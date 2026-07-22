@@ -147,7 +147,9 @@ Chat text and images are stored in the browser with **IndexedDB** when available
 (images as Blobs). If IndexedDB is unavailable, the app falls back to limited
 `localStorage` and may trim older images. Download any image you want to keep.
 
-Generation also runs as a **server job**: closing the browser tab does not cancel
-OpenRouter work. Reopen the page to claim the result. The server keeps only the
-**newest 10** job results on disk (`data/jobs/`, `JOB_CACHE_MAX`). API keys are
-used in memory for the job and are not written to disk.
+Generation also runs as a **server job** (two-phase): the browser first reserves
+a job id + claim token, then uploads the request body. Closing the tab after
+reserve does not cancel OpenRouter work. Reopen the page to claim the result
+with the stored claim token. The server keeps only the **newest 10** job results
+on disk (`data/jobs/`, `JOB_CACHE_MAX`). API keys are used in memory for the job
+and are not written to disk.

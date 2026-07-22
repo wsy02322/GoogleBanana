@@ -55,6 +55,8 @@ export interface Turn {
   gptMode?: GptImageMode
   /** Server async job id — survives tab close; reclaim via GET /jobs/:id */
   serverJobId?: string
+  /** Capability token required to reclaim the server job result. */
+  claimToken?: string
   reasoning?: string
   /** @deprecated Kept optional so older localStorage chats still load. */
   searchGrounding?: string
@@ -90,6 +92,7 @@ export interface WorkspaceSessions {
 /** Browser bookmark for a server-side generation job (reclaim after tab close). */
 export interface PendingServerJob {
   jobId: string
+  claimToken: string
   workspace: Workspace
   conversationId: string
   assistantTurnId: string

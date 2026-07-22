@@ -452,14 +452,19 @@ function saveToLocalStorageWithTrim(data: WorkspaceSessions): SessionsSaveResult
   }
 }
 
-async function saveToIdb(data: WorkspaceSessions): Promise<SessionsSaveResult> {
+async function saveToIdb(
+  data: WorkspaceSessions,
+  { clearLegacy = true }: { clearLegacy?: boolean } = {},
+): Promise<SessionsSaveResult> {
   const { persisted, imageEntries } = await persistSessionsForIdb(data)
   await idbPutImages(imageEntries)
   await idbPutSessionsRecord(persisted)
   await gcUnreferencedImages(persisted)
   writeBackendPreference('idb')
-  // Keep localStorage from holding bulky duplicates after a successful IDB write.
-  clearLegacyLocalSessionKeys()
+  if (clearLegacy) {
+    // Only drop localStorage after a successful IDB write that we can still read.
+    clearLegacyLocalSessionKeys()
+  }
   return { status: 'saved', trimmedImages: 0, backend: 'idb' }
 }
 
@@ -467,31 +472,55 @@ async function saveToIdb(data: WorkspaceSessions): Promise<SessionsSaveResult> {
  * Async session loader. Prefers IndexedDB (images as Blobs + text sessions).
  * Migrates legacy localStorage histories automatically. Falls back to
  * localStorage when IndexedDB is unavailable.
+ *
+ * Never returns a blank workspace in place of existing IndexedDB data — that
+ * would let the App auto-save and permanently wipe chat history.
  */
 export async function loadWorkspaceSessionsAsync(): Promise<SessionsLoadResult> {
   preferredBackend = preferredBackend ?? readBackendPreference()
 
-  try {
+  const tryLoadIdb = async (): Promise<SessionsLoadResult | null> => {
     const existing = await idbGetSessionsRecord<WorkspaceSessions>()
-    if (existing && isWorkspaceSessions(existing)) {
-      const sessions = await hydrateSessions(normalizeWorkspaceSessions(existing))
+    if (!existing || !isWorkspaceSessions(existing)) return null
+    const normalized = normalizeWorkspaceSessions(existing)
+    try {
+      const sessions = await hydrateSessions(normalized)
       writeBackendPreference('idb')
       return { sessions, backend: 'idb' }
+    } catch {
+      writeBackendPreference('idb')
+      return {
+        sessions: normalized,
+        backend: 'idb',
+        warning:
+          'Some stored images could not be restored from IndexedDB. Chat text was kept — download any images that still display.',
+      }
     }
+  }
+
+  try {
+    const fromIdb = await tryLoadIdb()
+    if (fromIdb) return fromIdb
 
     const fromLocal = readLocalStorageSessionsRaw()
     if (fromLocal) {
-      await saveToIdb(fromLocal)
-      const persisted = await idbGetSessionsRecord<WorkspaceSessions>()
-      const sessions = await hydrateSessions(
-        persisted && isWorkspaceSessions(persisted)
-          ? normalizeWorkspaceSessions(persisted)
-          : fromLocal,
-      )
+      // Migrate without clearing localStorage until hydrate succeeds.
+      await saveToIdb(fromLocal, { clearLegacy: false })
+      const migrated = await tryLoadIdb()
+      if (migrated) {
+        clearLegacyLocalSessionKeys()
+        return {
+          ...migrated,
+          warning: migrated.warning || 'Migrated chat history to IndexedDB for larger image storage.',
+        }
+      }
+      // IDB write appeared to succeed but read-back failed — keep local copy.
+      writeBackendPreference('localStorage')
       return {
-        sessions: normalizeWorkspaceSessions(sessions),
-        backend: 'idb',
-        warning: 'Migrated chat history to IndexedDB for larger image storage.',
+        sessions: fromLocal,
+        backend: 'localStorage',
+        warning:
+          'IndexedDB migration could not be verified; keeping the previous browser history. Download important images.',
       }
     }
 
@@ -499,16 +528,42 @@ export async function loadWorkspaceSessionsAsync(): Promise<SessionsLoadResult> 
     await saveToIdb(empty)
     return { sessions: empty, backend: 'idb' }
   } catch {
-    // Fall through to localStorage.
+    // IndexedDB unavailable or hard-failed. Prefer any surviving local copy.
   }
 
-  const local = readLocalStorageSessionsRaw() ?? emptyWorkspaceSessions()
-  writeBackendPreference('localStorage')
+  // Last-chance IDB read without going through the failing happy path again.
+  try {
+    const rescue = await tryLoadIdb()
+    if (rescue) {
+      return {
+        ...rescue,
+        warning:
+          rescue.warning ||
+          'Recovered chat history from IndexedDB after a storage error. Download important images.',
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  const local = readLocalStorageSessionsRaw()
+  if (local) {
+    writeBackendPreference('localStorage')
+    return {
+      sessions: local,
+      backend: 'localStorage',
+      warning:
+        'IndexedDB is unavailable; using limited browser storage. Download important images in case history is trimmed.',
+    }
+  }
+
+  // Truly nothing to restore — return empty but do NOT flip backend preference
+  // away from idb if we already preferred it (avoids later saves inventing a wipe path).
   return {
-    sessions: local,
-    backend: 'localStorage',
+    sessions: emptyWorkspaceSessions(),
+    backend: preferredBackend === 'localStorage' ? 'localStorage' : 'idb',
     warning:
-      'IndexedDB is unavailable; using limited browser storage. Download important images in case history is trimmed.',
+      'No saved chat history was found. New chats will be stored when possible — download images you want to keep.',
   }
 }
 
@@ -662,6 +717,7 @@ export function loadPendingServerJobs(): PendingServerJob[] {
       const job = item as PendingServerJob
       return (
         typeof job.jobId === 'string' &&
+        typeof job.claimToken === 'string' &&
         (job.workspace === 'banana' || job.workspace === 'gpt') &&
         typeof job.conversationId === 'string' &&
         typeof job.assistantTurnId === 'string'

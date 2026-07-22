@@ -124,8 +124,8 @@ function proxyHeaders(settings: Settings, apiPath: 'chat/completions' | 'images'
 export interface GenerateRequestOptions {
   /** Optional. Aborting only stops local polling — the server job keeps running. */
   signal?: AbortSignal
-  /** Called once the server accepts the async job (survives tab close). */
-  onJobStarted?: (jobId: string) => void
+  /** Called as soon as the server reserves a job id (before the large body upload). */
+  onJobStarted?: (jobId: string, claimToken: string) => void
 }
 
 const JOB_POLL_MS = 2_000
@@ -148,13 +148,17 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 /** Poll a server job until done/error. Safe to call again after reopening the tab. */
 export async function waitForServerJob(
   jobId: string,
+  claimToken: string,
   signal?: AbortSignal,
 ): Promise<{ apiPath: 'chat/completions' | 'images'; data: unknown }> {
   for (;;) {
     if (signal?.aborted) throw new DOMException('Polling aborted', 'AbortError')
 
     try {
-      const res = await fetch(`/jobs/${encodeURIComponent(jobId)}`, { signal })
+      const res = await fetch(`/jobs/${encodeURIComponent(jobId)}`, {
+        signal,
+        headers: { 'X-Job-Claim-Token': claimToken },
+      })
       const payload = (await res.json().catch(() => ({}))) as {
         status?: string
         apiPath?: string
@@ -165,6 +169,14 @@ export async function waitForServerJob(
       if (res.status === 404) {
         throw new Error(
           'Job not found. The server only keeps the newest 10 results; this one may have expired.',
+        )
+      }
+
+      if (res.status === 401 || res.status === 403) {
+        throw new Error(
+          typeof payload.error === 'string'
+            ? payload.error
+            : payload.error?.message || 'Invalid or missing job claim token.',
         )
       }
 
@@ -189,6 +201,13 @@ export async function waitForServerJob(
             : payload.error?.message || 'Generation job failed'
         throw new Error(msg)
       }
+
+      if (payload.status === 'accepted') {
+        // Reserved, but the request body never reached /run (tab closed too early).
+        throw new Error(
+          'This job was reserved but never started. Please regenerate — close the tab only after generation has begun.',
+        )
+      }
     } catch (err) {
       if (signal?.aborted) throw err
       if (err instanceof Error && err.name === 'AbortError') throw err
@@ -207,8 +226,10 @@ export async function waitForServerJob(
 }
 
 /**
- * Submit generation as a server-side job, then poll for the result.
- * Closing the browser tab does not cancel the server job.
+ * Two-phase server job:
+ * 1) reserve id + claim token (bookmark immediately — safe to close tab after this)
+ * 2) upload body and start OpenRouter work
+ * 3) poll until done
  */
 async function requestViaServerJob(
   settings: Settings,
@@ -216,25 +237,45 @@ async function requestViaServerJob(
   body: Record<string, unknown>,
   opts?: GenerateRequestOptions,
 ): Promise<unknown> {
-  const res = await fetch('/jobs', {
+  const acceptRes = await fetch('/jobs', {
     method: 'POST',
-    headers: proxyHeaders(settings, apiPath),
+    headers: { 'Content-Type': 'application/json' },
+    signal: opts?.signal,
+  })
+  const accepted = (await acceptRes.json().catch(() => ({}))) as {
+    id?: string
+    claimToken?: string
+    error?: { message?: string }
+  }
+  if (!acceptRes.ok) {
+    throw new Error(accepted.error?.message || `Failed to reserve job (HTTP ${acceptRes.status})`)
+  }
+  if (!accepted.id || !accepted.claimToken) {
+    throw new Error('Server did not return a job id and claim token.')
+  }
+
+  // Bookmark before the large upload so a mid-request tab close can still reclaim.
+  opts?.onJobStarted?.(accepted.id, accepted.claimToken)
+
+  const runRes = await fetch(`/jobs/${encodeURIComponent(accepted.id)}/run`, {
+    method: 'POST',
+    headers: {
+      ...proxyHeaders(settings, apiPath),
+      'X-Job-Claim-Token': accepted.claimToken,
+    },
     body: JSON.stringify(body),
     signal: opts?.signal,
   })
-
-  const payload = (await res.json().catch(() => ({}))) as {
+  const started = (await runRes.json().catch(() => ({}))) as {
     id?: string
+    status?: string
     error?: { message?: string }
   }
-
-  if (!res.ok) {
-    throw new Error(payload.error?.message || `Failed to start job (HTTP ${res.status})`)
+  if (!runRes.ok && runRes.status !== 409) {
+    throw new Error(started.error?.message || `Failed to start job (HTTP ${runRes.status})`)
   }
-  if (!payload.id) throw new Error('Server did not return a job id.')
 
-  opts?.onJobStarted?.(payload.id)
-  const { data } = await waitForServerJob(payload.id, opts?.signal)
+  const { data } = await waitForServerJob(accepted.id, accepted.claimToken, opts?.signal)
   return data
 }
 

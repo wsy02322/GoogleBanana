@@ -195,6 +195,36 @@ export default function App() {
       )
     }
 
+    const collectResumeJobs = (): ReturnType<typeof loadPendingServerJobs> => {
+      const byId = new Map<string, ReturnType<typeof loadPendingServerJobs>[number]>()
+      for (const job of loadPendingServerJobs()) {
+        byId.set(job.jobId, job)
+      }
+      // Also reclaim from conversation turns in case the pending-jobs list was lost.
+      for (const ws of ['banana', 'gpt'] as const) {
+        for (const conversation of workspaceSessions[ws].conversations) {
+          for (const turn of conversation.turns) {
+            if (
+              turn.pending &&
+              turn.serverJobId &&
+              turn.claimToken &&
+              !byId.has(turn.serverJobId)
+            ) {
+              byId.set(turn.serverJobId, {
+                jobId: turn.serverJobId,
+                claimToken: turn.claimToken,
+                workspace: ws,
+                conversationId: conversation.id,
+                assistantTurnId: turn.id,
+                createdAt: turn.createdAt,
+              })
+            }
+          }
+        }
+      }
+      return [...byId.values()]
+    }
+
     const resumeOne = async (job: ReturnType<typeof loadPendingServerJobs>[number]) => {
       const ac = new AbortController()
       controllers.push(ac)
@@ -202,13 +232,19 @@ export default function App() {
       updateConversationTurns(job.workspace, job.conversationId, (prev) =>
         prev.map((t) =>
           t.id === job.assistantTurnId
-            ? { ...t, pending: true, error: undefined, serverJobId: job.jobId }
+            ? {
+                ...t,
+                pending: true,
+                error: undefined,
+                serverJobId: job.jobId,
+                claimToken: job.claimToken,
+              }
             : t,
         ),
       )
 
       try {
-        const { apiPath, data } = await waitForServerJob(job.jobId, ac.signal)
+        const { apiPath, data } = await waitForServerJob(job.jobId, job.claimToken, ac.signal)
         if (cancelled) return
         applyJobResult(job.workspace, job.conversationId, job.assistantTurnId, apiPath, data)
         removePendingServerJob(job.jobId)
@@ -232,7 +268,7 @@ export default function App() {
       }
     }
 
-    const pending = loadPendingServerJobs()
+    const pending = collectResumeJobs()
     void (async () => {
       for (const job of pending) {
         if (cancelled) return
@@ -322,19 +358,23 @@ export default function App() {
 
   const trackServerJob = (
     jobId: string,
+    claimToken: string,
     ws: Workspace,
     conversationId: string,
     assistantTurnId: string,
   ) => {
     upsertPendingServerJob({
       jobId,
+      claimToken,
       workspace: ws,
       conversationId,
       assistantTurnId,
       createdAt: Date.now(),
     })
     updateConversationTurns(ws, conversationId, (prev) =>
-      prev.map((t) => (t.id === assistantTurnId ? { ...t, serverJobId: jobId } : t)),
+      prev.map((t) =>
+        t.id === assistantTurnId ? { ...t, serverJobId: jobId, claimToken } : t,
+      ),
     )
   }
 
@@ -355,7 +395,8 @@ export default function App() {
         bananaMode: mode,
       },
       {
-        onJobStarted: (jobId) => trackServerJob(jobId, ws, conversationId, assistantId),
+        onJobStarted: (jobId, claimToken) =>
+          trackServerJob(jobId, claimToken, ws, conversationId, assistantId),
       },
     )
     updateConversationTurns(ws, conversationId, (prev) => {
@@ -409,8 +450,8 @@ export default function App() {
             mode: gptMode,
           },
           {
-            onJobStarted: (jobId) =>
-              trackServerJob(jobId, jobWorkspace, jobConversationId, assistantTurn.id),
+            onJobStarted: (jobId, claimToken) =>
+              trackServerJob(jobId, claimToken, jobWorkspace, jobConversationId, assistantTurn.id),
           },
         )
         updateConversationTurns(jobWorkspace, jobConversationId, (prev) => {

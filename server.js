@@ -235,13 +235,25 @@ app.post('/proxy', async (req, res) => {
 })
 
 /**
- * Async generation jobs: browser can disconnect; reclaim via GET /jobs/:id.
+ * Async generation jobs (two-phase so the browser can bookmark the job id
+ * before uploading a large body / before OpenRouter starts):
+ *   POST /jobs              → { id, claimToken, status: "accepted" }
+ *   POST /jobs/:id/run      → starts upstream work (requires claim token)
+ *   GET  /jobs/:id          → status + result when done (requires claim token)
+ *
  * Keeps only the newest JOB_CACHE_MAX (default 10) results on disk.
+ * API keys stay in memory for the running job only.
  */
-app.post('/jobs', (req, res) => {
+app.post('/jobs', (_req, res) => {
+  const job = jobStore.acceptJob()
+  res.status(202).json(job)
+})
+
+app.post('/jobs/:id/run', (req, res) => {
   const baseUrl = sanitizeBaseUrl(req.get('x-or-base-url'))
   const auth = req.get('authorization')
   const apiPath = sanitizePath(req.get('x-or-path'))
+  const claimToken = req.get('x-job-claim-token') || req.body?.claimToken
 
   if (!baseUrl) {
     return res.status(400).json({ error: { message: 'Missing or invalid X-OR-Base-URL header.' } })
@@ -256,6 +268,9 @@ app.post('/jobs', (req, res) => {
       error: { message: `Invalid X-OR-Path. Allowed: ${[...ALLOWED_PATHS].join(', ')}` },
     })
   }
+  if (!claimToken || typeof claimToken !== 'string') {
+    return res.status(401).json({ error: { message: 'Missing X-Job-Claim-Token header.' } })
+  }
 
   const headers = {
     'Content-Type': 'application/json',
@@ -266,21 +281,20 @@ app.post('/jobs', (req, res) => {
   if (referer) headers['HTTP-Referer'] = referer
   if (title) headers['X-Title'] = title
 
+  // Strip claimToken from upstream body if the client nested it there.
+  const body = { ...(req.body || {}) }
+  delete body.claimToken
+
   const timeoutMs = Number(process.env.PROXY_TIMEOUT_MS) || 600000
-  const job = jobStore.createJob({
+  const started = jobStore.startJob(req.params.id, claimToken, {
     target: `${baseUrl}/${apiPath}`,
     apiPath,
     headers,
-    body: req.body,
+    body,
     timeoutMs,
   })
 
-  res.status(202).json(job)
-})
-
-app.get('/jobs/:id', (req, res) => {
-  const job = jobStore.getJob(req.params.id, { includeData: true })
-  if (!job) {
+  if (started.error === 'not_found') {
     return res.status(404).json({
       error: {
         message:
@@ -288,7 +302,35 @@ app.get('/jobs/:id', (req, res) => {
       },
     })
   }
-  res.json(job)
+  if (started.error === 'forbidden') {
+    return res.status(403).json({ error: { message: 'Invalid job claim token.' } })
+  }
+  if (started.error === 'conflict') {
+    return res.status(409).json(started.job)
+  }
+
+  res.status(202).json(started.job)
+})
+
+app.get('/jobs/:id', (req, res) => {
+  const claimToken = req.get('x-job-claim-token') || req.query.claimToken
+  if (!claimToken || typeof claimToken !== 'string') {
+    return res.status(401).json({ error: { message: 'Missing X-Job-Claim-Token header.' } })
+  }
+
+  const got = jobStore.getJob(req.params.id, claimToken, { includeData: true })
+  if (got.error === 'not_found') {
+    return res.status(404).json({
+      error: {
+        message:
+          'Job not found. The server only keeps the newest 10 results; this one may have expired.',
+      },
+    })
+  }
+  if (got.error === 'forbidden') {
+    return res.status(403).json({ error: { message: 'Invalid job claim token.' } })
+  }
+  res.json(got.job)
 })
 
 if (isProd) {
