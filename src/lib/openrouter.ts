@@ -168,7 +168,7 @@ export async function waitForServerJob(
 
       if (res.status === 404) {
         throw new Error(
-          'Job not found. The server only keeps the newest 10 results; this one may have expired.',
+          'Job not found. The server only keeps the newest 20 results; this one may have expired.',
         )
       }
 

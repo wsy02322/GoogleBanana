@@ -490,7 +490,7 @@ export default function App() {
           : raw
       if (raw === 'Failed to fetch' || (err instanceof TypeError && /fetch/i.test(raw))) {
         message =
-          'Lost connection while claiming the result. Reopen this page to reclaim it if the server job still finished (last 10 results are kept briefly).'
+          'Lost connection while claiming the result. Reopen this page to reclaim it if the server job still finished (last 20 results are kept briefly).'
       }
       updateConversationTurns(jobWorkspace, jobConversationId, (prev) =>
         prev.map((t) => (t.id === assistantTurn.id ? { ...t, pending: false, error: message } : t)),
@@ -615,7 +615,7 @@ export default function App() {
                 onClick={switchAction}
                 className="mt-0.5 text-left text-xs font-medium text-banana-600 underline-offset-2 hover:underline dark:text-banana-400"
                 aria-label={switchLabel}
-                title="Switching workspaces keeps generation running. Closing this tab is OK — reopen to claim the result (server keeps the newest 10)."
+                title="Switching workspaces keeps generation running. Closing this tab is OK — reopen to claim the result (server keeps the newest 20)."
               >
                 ({switchLabel})
               </button>

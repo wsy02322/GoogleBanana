@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 
-const MAX_JOBS = Number(process.env.JOB_CACHE_MAX) || 10
+const MAX_JOBS = Number(process.env.JOB_CACHE_MAX) || 20
 const TIMEOUT_MS = Number(process.env.PROXY_TIMEOUT_MS) || 600_000
 
 function tokensEqual(a, b) {

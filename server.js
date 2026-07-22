@@ -241,7 +241,7 @@ app.post('/proxy', async (req, res) => {
  *   POST /jobs/:id/run      → starts upstream work (requires claim token)
  *   GET  /jobs/:id          → status + result when done (requires claim token)
  *
- * Keeps only the newest JOB_CACHE_MAX (default 10) results on disk.
+ * Keeps only the newest JOB_CACHE_MAX (default 20) results on disk.
  * API keys stay in memory for the running job only.
  */
 app.post('/jobs', (_req, res) => {
@@ -298,7 +298,7 @@ app.post('/jobs/:id/run', (req, res) => {
     return res.status(404).json({
       error: {
         message:
-          'Job not found. The server only keeps the newest 10 results; this one may have expired.',
+          'Job not found. The server only keeps the newest 20 results; this one may have expired.',
       },
     })
   }
@@ -323,7 +323,7 @@ app.get('/jobs/:id', (req, res) => {
     return res.status(404).json({
       error: {
         message:
-          'Job not found. The server only keeps the newest 10 results; this one may have expired.',
+          'Job not found. The server only keeps the newest 20 results; this one may have expired.',
       },
     })
   }
