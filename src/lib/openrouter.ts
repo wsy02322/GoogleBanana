@@ -40,8 +40,14 @@ export const GPT_DIRECT_MODEL = 'openai/gpt-image-2'
 
 export const BANANA_FLASH_MODEL = 'google/gemini-3.1-flash-image'
 export const BANANA_PRO_MODEL = 'google/gemini-3-pro-image'
+/** 4K is only supported on preview variants routed by OpenRouter (not -20260528 stable). */
+export const BANANA_FLASH_PREVIEW_MODEL = 'google/gemini-3.1-flash-image-preview'
+export const BANANA_PRO_PREVIEW_MODEL = 'google/gemini-3-pro-image-preview'
 
-export function bananaModeModelId(mode: BananaMode): string {
+export function bananaModeModelId(mode: BananaMode, imageSize?: ImageSize): string {
+  if (imageSize === '4K') {
+    return mode === 'pro' ? BANANA_PRO_PREVIEW_MODEL : BANANA_FLASH_PREVIEW_MODEL
+  }
   return mode === 'pro' ? BANANA_PRO_MODEL : BANANA_FLASH_MODEL
 }
 
@@ -430,7 +436,7 @@ async function generateBananaImage(
   }
 
   const bananaMode: BananaMode = opts.bananaMode ?? 'thinking'
-  const model = bananaModeModelId(bananaMode)
+  const model = bananaModeModelId(bananaMode, opts.imageSize)
   const effort = bananaReasoningEffort(bananaMode)
 
   const body: Record<string, unknown> = {

@@ -566,7 +566,7 @@ export default function App() {
   const modeLine =
     workspace === 'gpt'
       ? `${gptMode === 'pro-thinking' ? 'Pro Thinking' : 'Direct'} · ${gptModeModelId(gptMode)}`
-      : `${bananaModeLabel(bananaMode)} · ${bananaModeModelId(bananaMode)}`
+      : `${bananaModeLabel(bananaMode)} · ${bananaModeModelId(bananaMode, currentImagePreferences.imageSize)}`
   const switchLabel = workspace === 'gpt' ? 'switch to Banana' : 'switch to ChatGPT'
   const switchAction = workspace === 'gpt' ? leaveGptWorkspace : enterGptWorkspace
 
