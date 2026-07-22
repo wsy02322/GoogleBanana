@@ -10,6 +10,7 @@
 // via the Authorization header sent by the browser (kept in localStorage).
 
 import express from 'express'
+import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -23,8 +24,13 @@ const isProd = process.env.NODE_ENV === 'production'
 /** Allowed relative paths under the OpenRouter-style base URL. */
 const ALLOWED_PATHS = new Set(['chat/completions', 'images'])
 
-/** Send whitespace over chunked encoding so mobile networks don't drop idle waits. */
-const HEARTBEAT_MS = 15_000
+/**
+ * Whitespace keep-alive while waiting for upstream.
+ * Mobile carrier NATs often drop idle TCP before GPT Pro Thinking finishes;
+ * keep this under ~15s. Do NOT emit heartbeats after JSON bytes start —
+ * padding is only safe as a leading prefix (client strips it).
+ */
+const HEARTBEAT_MS = Number(process.env.PROXY_HEARTBEAT_MS) || 8_000
 
 const app = express()
 app.use(express.json({ limit: '50mb' }))
@@ -53,12 +59,12 @@ function sanitizePath(raw) {
 
 function armSocketTimeouts(req, res, timeoutMs) {
   const socketMs = timeoutMs + 60_000
-  req.socket?.setKeepAlive?.(true, HEARTBEAT_MS)
+  req.socket?.setKeepAlive?.(true, Math.min(HEARTBEAT_MS, 15_000))
   req.socket?.setTimeout?.(socketMs)
   res.setTimeout(socketMs)
 }
 
-/** Begin a chunked JSON response and emit padding until upstream finishes. */
+/** Begin a chunked JSON response and emit leading padding until upstream body starts. */
 function startProxyKeepAlive(res) {
   res.statusCode = 200
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
@@ -70,10 +76,72 @@ function startProxyKeepAlive(res) {
   res.write(' ')
 
   const interval = setInterval(() => {
-    if (!res.writableEnded) res.write(' ')
+    if (!res.writableEnded && !res.destroyed) {
+      try {
+        res.write(' ')
+      } catch {
+        clearInterval(interval)
+      }
+    }
   }, HEARTBEAT_MS)
 
   return () => clearInterval(interval)
+}
+
+/** Write with backpressure so large image JSON does not reset mid-flush. */
+async function writeChunk(res, chunk) {
+  if (res.writableEnded || res.destroyed) {
+    throw new Error('Client connection closed while sending image response')
+  }
+  const ok = res.write(chunk)
+  if (!ok) await once(res, 'drain')
+}
+
+/**
+ * Stream upstream bytes to the browser as they arrive.
+ * Heartbeat runs only until the first upstream body byte (leading spaces only).
+ */
+async function forwardUpstreamBody(upstream, res, stopHeartbeat) {
+  let stopped = false
+  const stopHb = () => {
+    if (!stopped) {
+      stopped = true
+      stopHeartbeat()
+    }
+  }
+
+  if (!upstream.body || typeof upstream.body.getReader !== 'function') {
+    const buf = Buffer.from(await upstream.arrayBuffer())
+    stopHb()
+    if (buf.length > 0) await writeChunk(res, buf)
+    return buf.length
+  }
+
+  const reader = upstream.body.getReader()
+  let total = 0
+  let started = false
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value || value.byteLength === 0) continue
+      if (!started) {
+        // Stop whitespace padding before any upstream payload bytes.
+        stopHb()
+        started = true
+      }
+      total += value.byteLength
+      await writeChunk(res, Buffer.from(value))
+    }
+  } finally {
+    stopHb()
+    try {
+      reader.releaseLock()
+    } catch {
+      // ignore
+    }
+  }
+  return total
 }
 
 app.post('/proxy', async (req, res) => {
@@ -106,6 +174,11 @@ app.post('/proxy', async (req, res) => {
   const timeoutMs = Number(process.env.PROXY_TIMEOUT_MS) || 600000
   armSocketTimeouts(req, res, timeoutMs)
 
+  res.on('error', (err) => {
+    console.warn('[proxy] client response error:', err?.message || err)
+  })
+
+  const startedAt = Date.now()
   let stopHeartbeat = null
   try {
     stopHeartbeat = startProxyKeepAlive(res)
@@ -117,18 +190,19 @@ app.post('/proxy', async (req, res) => {
       signal: AbortSignal.timeout(timeoutMs),
     })
 
-    const buf = Buffer.from(await upstream.arrayBuffer())
-    stopHeartbeat()
+    const bytes = await forwardUpstreamBody(upstream, res, stopHeartbeat)
     stopHeartbeat = null
 
+    const elapsedMs = Date.now() - startedAt
     if (!upstream.ok) {
-      console.warn(`[proxy] upstream HTTP ${upstream.status} (${buf.length} bytes) → ${target}`)
+      console.warn(
+        `[proxy] upstream HTTP ${upstream.status} (${bytes} bytes, ${elapsedMs}ms) → ${target}`,
+      )
     } else {
-      console.log(`[proxy] upstream OK (${buf.length} bytes) → ${target}`)
+      console.log(`[proxy] upstream OK (${bytes} bytes, ${elapsedMs}ms) → ${target}`)
     }
 
-    res.write(buf)
-    res.end()
+    if (!res.writableEnded) res.end()
   } catch (err) {
     if (stopHeartbeat) stopHeartbeat()
     console.error('[proxy]', err?.name || 'Error', err?.message || err)
@@ -136,12 +210,16 @@ app.post('/proxy', async (req, res) => {
     const message =
       err?.name === 'TimeoutError' || err?.cause?.name === 'TimeoutError'
         ? `Upstream request timed out after ${timeoutMs}ms. Image generation can take several minutes — try 1K size or raise PROXY_TIMEOUT_MS.`
-        : `Upstream request failed: ${err?.message || String(err)}`
+        : /Client connection closed/i.test(String(err?.message || ''))
+          ? 'Browser connection closed before the image finished downloading. Keep this tab open and retry on a more stable network (Wi‑Fi helps).'
+          : `Upstream request failed: ${err?.message || String(err)}`
 
     if (res.headersSent) {
       try {
-        res.write(JSON.stringify({ error: { message } }))
-        res.end()
+        if (!res.writableEnded) {
+          res.write(JSON.stringify({ error: { message } }))
+          res.end()
+        }
       } catch {
         // ignore double-end
       }

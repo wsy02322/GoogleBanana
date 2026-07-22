@@ -331,7 +331,7 @@ export default function App() {
           : raw
       if (raw === 'Failed to fetch' || (err instanceof TypeError && /fetch/i.test(raw))) {
         message =
-          'Connection lost while waiting for the image. Keep this browser tab open until the image finishes, or retry on a more stable network.'
+          'Connection lost while waiting for the image. OpenRouter may still finish (and charge) even when this tab drops. Keep the tab open, prefer Wi‑Fi for Pro Thinking / large sizes, then retry.'
       }
       updateConversationTurns(jobWorkspace, jobConversationId, (prev) =>
         prev.map((t) => (t.id === assistantTurn.id ? { ...t, pending: false, error: message } : t)),

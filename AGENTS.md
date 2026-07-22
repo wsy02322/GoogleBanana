@@ -26,10 +26,11 @@ There is one runnable unit, started together by `npm run dev`:
   restart the dev process.
 - Do **not** add a per-request `req.on('close', () => controller.abort())` abort
   in the proxy: with Express it aborts the upstream `fetch` prematurely and the
-  response hangs. The proxy instead uses `AbortSignal.timeout`
-  (`PROXY_TIMEOUT_MS`, default 600000ms), buffers the full upstream body, and
-  emits **chunked heartbeat whitespace** every 15s while waiting so mobile
-  networks do not drop idle connections during 2+ minute GPT image jobs.
+  response hangs. The proxy uses `AbortSignal.timeout` (`PROXY_TIMEOUT_MS`,
+  default 600000ms), emits **chunked heartbeat whitespace** about every 8s
+  (`PROXY_HEARTBEAT_MS`) only while waiting for the first upstream body byte,
+  then **streams** the upstream payload to the browser with write backpressure
+  so large GPT image JSON does not stall or drop mid-transfer on mobile NATs.
 - Real image generation requires a valid OpenRouter key. `google/gemini-3-pro-image`
   is the default Banana model (~20s per image); `google/gemini-3.1-flash-image` is
   faster (~7s). GPT **Pro Thinking** (`openai/gpt-5.4-image-2` + high reasoning)

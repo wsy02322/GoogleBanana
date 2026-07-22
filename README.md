@@ -52,6 +52,11 @@ By default the container listens on `127.0.0.1:8787`. Put Nginx or Caddy in
 front for HTTPS. Set `proxy_read_timeout` (Nginx) or equivalent to at least
 **600s** — GPT Pro Thinking image generation can take several minutes.
 
+If OpenRouter shows the job as complete but the page says connection lost, the
+browser tab dropped while downloading a large/slow response. Keep the tab open,
+prefer Wi‑Fi for Pro Thinking / 4K, and redeploy a build that streams proxy
+responses with idle heartbeats (`PROXY_HEARTBEAT_MS`, default 8000).
+
 Health check: `GET /healthz` → `{"ok":true}`.
 
 #### Run an old and new version side by side
