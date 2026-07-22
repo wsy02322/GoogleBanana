@@ -40,14 +40,8 @@ export const GPT_DIRECT_MODEL = 'openai/gpt-image-2'
 
 export const BANANA_FLASH_MODEL = 'google/gemini-3.1-flash-image'
 export const BANANA_PRO_MODEL = 'google/gemini-3-pro-image'
-/** 4K is only supported on preview variants routed by OpenRouter (not -20260528 stable). */
-export const BANANA_FLASH_PREVIEW_MODEL = 'google/gemini-3.1-flash-image-preview'
-export const BANANA_PRO_PREVIEW_MODEL = 'google/gemini-3-pro-image-preview'
 
-export function bananaModeModelId(mode: BananaMode, imageSize?: ImageSize): string {
-  if (imageSize === '4K') {
-    return mode === 'pro' ? BANANA_PRO_PREVIEW_MODEL : BANANA_FLASH_PREVIEW_MODEL
-  }
+export function bananaModeModelId(mode: BananaMode): string {
   return mode === 'pro' ? BANANA_PRO_MODEL : BANANA_FLASH_MODEL
 }
 
@@ -416,6 +410,33 @@ function latestUserReferences(history: Turn[]): Array<{ type: 'image_url'; image
   return []
 }
 
+/** Text context for Banana Image API (4K uses resolution, not chat image_size). */
+function bananaImagePrompt(history: Turn[]): string {
+  const lines: string[] = []
+  for (const t of history) {
+    if (t.error || t.pending) continue
+    if (t.text.trim()) {
+      lines.push(`${t.role === 'user' ? 'User' : 'Assistant'}: ${t.text.trim()}`)
+    }
+  }
+  if (lines.length === 0) return 'Generate an image'
+  return lines.join('\n\n')
+}
+
+/** Up to 14 reference images from the conversation (Image API input_references). */
+function bananaInputReferences(
+  history: Turn[],
+): Array<{ type: 'image_url'; image_url: { url: string } }> {
+  const refs: Array<{ type: 'image_url'; image_url: { url: string } }> = []
+  for (const t of history) {
+    if (t.error || t.pending) continue
+    for (const url of t.images) {
+      refs.push({ type: 'image_url', image_url: { url } })
+    }
+  }
+  return refs.slice(-14)
+}
+
 export async function generateImage(
   settings: Settings,
   history: Turn[],
@@ -436,7 +457,32 @@ async function generateBananaImage(
   }
 
   const bananaMode: BananaMode = opts.bananaMode ?? 'thinking'
-  const model = bananaModeModelId(bananaMode, opts.imageSize)
+  const model = bananaModeModelId(bananaMode)
+
+  // Stable Banana slugs reject image_config.image_size 4K on chat/completions;
+  // OpenRouter's Image API accepts resolution 4K on the same model ids.
+  if (opts.imageSize === '4K') {
+    const input_references = bananaInputReferences(history)
+    const body: Record<string, unknown> = {
+      model,
+      prompt: bananaImagePrompt(history),
+      resolution: opts.imageSize,
+      aspect_ratio: opts.aspectRatio,
+      n: 1,
+    }
+    if (input_references.length > 0) {
+      body.input_references = input_references
+    }
+
+    const data = await requestViaServerJob(settings, 'images', body, requestOpts)
+    const result = imagesFromImageApi(data)
+    return {
+      ...result,
+      modelUsed: model,
+      bananaMode,
+    }
+  }
+
   const effort = bananaReasoningEffort(bananaMode)
 
   const body: Record<string, unknown> = {
