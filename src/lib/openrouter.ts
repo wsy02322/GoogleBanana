@@ -70,20 +70,6 @@ export function imageQualityCostHint(quality: ImageQuality): string {
   return 'high · ~4× cost · best quality'
 }
 
-/** Footer copy explaining cost/quality knobs for the active workspace. */
-export function composerCostFootnote(
-  workspace: 'banana' | 'gpt',
-  gptMode: 'pro-thinking' | 'direct',
-): string {
-  if (workspace === 'banana') {
-    return 'Banana has no separate quality knob — resolution is the main cost/detail control (1K ~1×, 2K ~2–4×, 4K ~4–10×; rough). Enter to send.'
-  }
-  if (gptMode === 'direct') {
-    return 'Direct: highest direct image quality; latest prompt only (no chat history). Re-attach a previous result and restate prior instructions to continue editing. Enter to send.'
-  }
-  return 'Pro Thinking balances image quality, multi-turn editing, and high reasoning. Resolution still affects cost (~1×/2–4×/4–10×); quality control is Direct-only. Enter to send.'
-}
-
 function bananaReasoningEffort(mode: BananaMode): 'minimal' | 'high' {
   return mode === 'fast' ? 'minimal' : 'high'
 }

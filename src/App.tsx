@@ -96,8 +96,6 @@ export default function App() {
   const sessions = workspaceSessions[workspace]
   const currentImagePreferences = imagePreferences[workspace]
   const busy = Boolean(activeJobs[workspace])
-  const otherBusy =
-    workspace === 'banana' ? Boolean(activeJobs.gpt) : Boolean(activeJobs.banana)
 
   const setWorkspaceJob = (ws: Workspace, conversationId: string | undefined) => {
     setActiveJobs((prev) => ({ ...prev, [ws]: conversationId }))
@@ -604,7 +602,7 @@ export default function App() {
               <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
                 <h1 className="truncate text-base font-semibold sm:text-lg">{workspaceTitle}</h1>
                 <span
-                  className="max-w-full truncate text-xs text-gray-500 dark:text-gray-400 sm:text-sm"
+                  className="hidden max-w-full truncate text-xs text-gray-500 dark:text-gray-400 sm:inline sm:text-sm"
                   title={modeLine}
                 >
                   {modeLine}
@@ -619,13 +617,6 @@ export default function App() {
               >
                 ({switchLabel})
               </button>
-              {(busy || otherBusy) && (
-                <p className="mt-0.5 text-[11px] leading-snug text-amber-700 dark:text-amber-300">
-                  {otherBusy
-                    ? 'Generation continues in the other workspace — result saves there. You can close this tab and reopen to claim it.'
-                    : 'You can switch workspaces or close this tab — generation keeps running on the server. Reopen to claim the result.'}
-                </p>
-              )}
             </div>
           </div>
 

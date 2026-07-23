@@ -9,9 +9,7 @@ import type {
 } from '../lib/types'
 import {
   bananaModeHint,
-  composerCostFootnote,
   imageQualityCostHint,
-  imageSizeCostHint,
 } from '../lib/openrouter'
 import { fileToDataUrl } from '../lib/image'
 import { ImageIcon, SendIcon, CloseIcon } from './icons'
@@ -123,7 +121,7 @@ export default function Composer({
               </button>
             )
           })}
-          <span className="text-xs text-gray-400 dark:text-gray-500">
+          <span className="hidden text-xs text-gray-400 dark:text-gray-500 sm:inline">
             {GPT_MODES.find((m) => m.id === gptMode)?.hint}
           </span>
         </div>
@@ -144,7 +142,7 @@ export default function Composer({
               </button>
             )
           })}
-          <span className="text-xs text-gray-400 dark:text-gray-500">
+          <span className="hidden text-xs text-gray-400 dark:text-gray-500 sm:inline">
             {bananaModeHint(bananaMode)}
           </span>
         </div>
@@ -207,7 +205,7 @@ export default function Composer({
           />
           <SelectPill
             value={imageSize}
-            options={IMAGE_SIZES.map((o) => ({ value: o, label: imageSizeCostHint(o) }))}
+            options={IMAGE_SIZES.map((o) => ({ value: o, label: o }))}
             onChange={(v) => onChangeImageSize(v as ImageSize)}
             title="Resolution — 1K ~1×, 2K ~2–4×, 4K ~4–10× cost vs 1K (rough); higher = more detail"
           />
@@ -232,12 +230,6 @@ export default function Composer({
           </button>
         </div>
       </div>
-      <p className="mt-2 text-center text-xs leading-snug text-gray-400 dark:text-gray-500">
-        {composerCostFootnote(workspace, gptMode)}
-      </p>
-      <p className="mt-1 text-center text-xs leading-snug text-gray-400 dark:text-gray-500">
-        Download images you want to keep. Chat history uses IndexedDB when available.
-      </p>
       {storageWarning && (
         <p className="mt-1 text-center text-xs font-medium leading-snug text-amber-700 dark:text-amber-300">
           {storageWarning}

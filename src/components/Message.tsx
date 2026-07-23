@@ -54,8 +54,7 @@ export default function Message({ turn, busy, onRedoWithPro }: Props) {
             <div className="min-w-0">
               <p className="text-sm text-gray-600 dark:text-gray-300">{pendingLabel}</p>
               <p className="mt-1 text-xs leading-snug text-gray-500 dark:text-gray-400">
-                Running on the server. You can switch workspaces or close this tab — reopen to claim
-                the result (newest 20 kept briefly).
+                Running on the server — close this tab anytime and reopen to claim the result.
               </p>
             </div>
           </div>
