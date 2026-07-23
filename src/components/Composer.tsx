@@ -95,13 +95,6 @@ export default function Composer({
     setImages([])
   }
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      submit()
-    }
-  }
-
   return (
     <div className="mx-auto w-full max-w-3xl">
       {workspace === 'gpt' ? (
@@ -169,7 +162,6 @@ export default function Composer({
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKeyDown}
           rows={1}
           placeholder={
             workspace === 'gpt'
