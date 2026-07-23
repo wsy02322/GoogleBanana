@@ -40,6 +40,7 @@ import {
   bananaModeModelId,
 } from './lib/openrouter'
 import Composer from './components/Composer'
+import InfoPopover, { InfoSection } from './components/InfoPopover'
 import Message from './components/Message'
 import SettingsModal from './components/SettingsModal'
 import Sidebar from './components/Sidebar'
@@ -599,13 +600,25 @@ export default function App() {
             </span>
 
             <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
                 <h1 className="truncate text-base font-semibold sm:text-lg">{workspaceTitle}</h1>
                 <span
                   className="hidden max-w-full truncate text-xs text-gray-500 dark:text-gray-400 sm:inline sm:text-sm"
                   title={modeLine}
                 >
                   {modeLine}
+                </span>
+                <span className="sm:hidden">
+                  <InfoPopover label="Current model — tap for details" title={modeLine} placement="below">
+                    <InfoSection title="Model" lines={[modeLine]} />
+                    <InfoSection
+                      title="While generating"
+                      lines={[
+                        'Generation keeps running on the server.',
+                        'Close this tab and reopen to claim the result.',
+                      ]}
+                    />
+                  </InfoPopover>
                 </span>
               </div>
               <button

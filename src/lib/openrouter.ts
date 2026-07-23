@@ -70,6 +70,85 @@ export function imageQualityCostHint(quality: ImageQuality): string {
   return 'high · ~4× cost · best quality'
 }
 
+export interface ComposerInfoSection {
+  title: string
+  lines: string[]
+}
+
+/** On-demand composer help shown via the info popover. */
+export function composerInfoSections(
+  workspace: 'banana' | 'gpt',
+  opts: { gptMode: GptImageMode; bananaMode: BananaMode },
+): ComposerInfoSection[] {
+  const shared: ComposerInfoSection[] = [
+    {
+      title: 'Generation',
+      lines: [
+        'Runs on the server — you can switch workspaces or close this tab while it works.',
+        'Reopen the same browser to claim the result (newest 20 kept briefly).',
+        'Tap the send button to generate. Enter adds a new line.',
+      ],
+    },
+    {
+      title: 'Storage',
+      lines: [
+        'Download images you want to keep.',
+        'Chat history is saved in IndexedDB when your browser supports it.',
+      ],
+    },
+  ]
+
+  if (workspace === 'banana') {
+    return [
+      {
+        title: 'Current model',
+        lines: [`${bananaModeLabel(opts.bananaMode)} · ${bananaModeModelId(opts.bananaMode)}`],
+      },
+      {
+        title: 'Modes',
+        lines: [
+          'Fast — Nano Banana 2, minimal thinking, fastest.',
+          'Thinking — Nano Banana 2, high thinking, balanced.',
+          'Pro — Nano Banana Pro, highest fidelity.',
+        ],
+      },
+      {
+        title: 'Resolution',
+        lines: [
+          '1K — ~1× cost, standard detail.',
+          '2K — ~2–4× cost, sharper.',
+          '4K — ~4–10× cost, max detail (uses Image API on the same model).',
+          'Banana has no separate quality knob — resolution is the main cost/detail control.',
+        ],
+      },
+      ...shared,
+    ]
+  }
+
+  return [
+    {
+      title: 'Current model',
+      lines: [`${gptModeLabel(opts.gptMode)} · ${gptModeModelId(opts.gptMode)}`],
+    },
+    {
+      title: 'Modes',
+      lines: [
+        'Pro Thinking — gpt-5.4-image-2, high reasoning, multi-turn editing.',
+        'Direct — gpt-image-2, highest direct image quality, latest prompt only.',
+        'Direct: re-attach a previous result and restate prior instructions to continue editing.',
+      ],
+    },
+    {
+      title: 'Resolution & quality',
+      lines: [
+        'Resolution: 1K ~1×, 2K ~2–4×, 4K ~4–10× cost vs 1K (rough).',
+        'Quality control is Direct-only (auto / low / medium / high).',
+      ],
+    },
+    ...shared,
+  ]
+}
+
 function bananaReasoningEffort(mode: BananaMode): 'minimal' | 'high' {
   return mode === 'fast' ? 'minimal' : 'high'
 }

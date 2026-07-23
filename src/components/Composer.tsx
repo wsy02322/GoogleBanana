@@ -9,9 +9,11 @@ import type {
 } from '../lib/types'
 import {
   bananaModeHint,
+  composerInfoSections,
   imageQualityCostHint,
 } from '../lib/openrouter'
 import { fileToDataUrl } from '../lib/image'
+import InfoPopover, { InfoSection } from './InfoPopover'
 import { ImageIcon, SendIcon, CloseIcon } from './icons'
 
 interface Props {
@@ -76,6 +78,8 @@ export default function Composer({
 
   const canSend = !disabled && (text.trim().length > 0 || images.length > 0)
   const showGptQuality = workspace === 'gpt' && gptMode === 'direct'
+  const infoSections = composerInfoSections(workspace, { gptMode, bananaMode })
+  const infoTitle = workspace === 'gpt' ? 'GPT Image tips' : 'Banana tips'
 
   const handleFiles = async (files: FileList | null) => {
     if (!files) return
@@ -117,6 +121,13 @@ export default function Composer({
           <span className="hidden text-xs text-gray-400 dark:text-gray-500 sm:inline">
             {GPT_MODES.find((m) => m.id === gptMode)?.hint}
           </span>
+          <div className="ml-auto">
+            <InfoPopover label={`${infoTitle} — tap for details`} title={infoTitle} placement="above">
+              {infoSections.map((section) => (
+                <InfoSection key={section.title} title={section.title} lines={section.lines} />
+              ))}
+            </InfoPopover>
+          </div>
         </div>
       ) : (
         <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -138,6 +149,13 @@ export default function Composer({
           <span className="hidden text-xs text-gray-400 dark:text-gray-500 sm:inline">
             {bananaModeHint(bananaMode)}
           </span>
+          <div className="ml-auto">
+            <InfoPopover label={`${infoTitle} — tap for details`} title={infoTitle} placement="above">
+              {infoSections.map((section) => (
+                <InfoSection key={section.title} title={section.title} lines={section.lines} />
+              ))}
+            </InfoPopover>
+          </div>
         </div>
       )}
 
