@@ -1,11 +1,9 @@
 import type {
   AspectRatio,
   BananaMode,
-  CapabilityReport,
-  Citation,
   GptImageMode,
+  ImageQuality,
   ImageSize,
-  SearchGrounding,
   Settings,
   Turn,
 } from './types'
@@ -24,21 +22,17 @@ interface ChatMessage {
 export interface GenerateOptions {
   aspectRatio: AspectRatio
   imageSize: ImageSize
+  /** GPT Direct Images API only; ignored by Banana / Pro Thinking. */
+  imageQuality?: ImageQuality
   bananaMode?: BananaMode
-  searchGrounding?: SearchGrounding
 }
 
 export interface GenerateResult {
   text: string
   images: string[]
   reasoning?: string
-  citations?: Citation[]
   modelUsed?: string
   bananaMode?: BananaMode
-  searchGrounding?: SearchGrounding
-  capability?: CapabilityReport
-  /** Internal: search calls reported by OpenRouter usage */
-  searchCalls?: number
 }
 
 export const GPT_PRO_THINKING_MODEL = 'openai/gpt-5.4-image-2'
@@ -63,56 +57,100 @@ export function bananaModeHint(mode: BananaMode): string {
   return 'Nano Banana Pro · highest fidelity'
 }
 
-function bananaReasoningEffort(mode: BananaMode): 'minimal' | 'high' {
-  return mode === 'fast' ? 'minimal' : 'high'
+export function imageSizeCostHint(size: ImageSize): string {
+  if (size === '1K') return '1K · ~1× cost · standard detail'
+  if (size === '2K') return '2K · ~2–4× cost · sharper'
+  return '4K · ~4–10× cost · max detail'
 }
 
-export function buildCapabilityReport(input: {
-  mode: BananaMode
-  model: string
-  searchRequested: SearchGrounding
-  searchUsed: SearchGrounding
-  searchFallback?: boolean
-  reasoning?: string
-  citationCount: number
-  searchCalls?: number
-  imageOk: boolean
-}): CapabilityReport {
-  let thinking: CapabilityReport['thinking']
-  if (input.mode === 'fast') {
-    thinking = input.reasoning ? 'returned' : 'minimal'
-  } else {
-    thinking = input.reasoning ? 'returned' : 'not_returned'
+export function imageQualityCostHint(quality: ImageQuality): string {
+  if (quality === 'auto') return 'auto · provider picks · mid cost'
+  if (quality === 'low') return 'low · ~1× cost · draft quality'
+  if (quality === 'medium') return 'medium · ~2× cost · good quality'
+  return 'high · ~4× cost · best quality'
+}
+
+export interface ComposerInfoSection {
+  title: string
+  lines: string[]
+}
+
+/** On-demand composer help shown via the info popover. */
+export function composerInfoSections(
+  workspace: 'banana' | 'gpt',
+  opts: { gptMode: GptImageMode; bananaMode: BananaMode },
+): ComposerInfoSection[] {
+  const shared: ComposerInfoSection[] = [
+    {
+      title: 'Generation',
+      lines: [
+        'Runs on the server — you can switch workspaces or close this tab while it works.',
+        'Reopen the same browser to claim the result (newest 20 kept briefly).',
+        'Tap the send button to generate. Enter adds a new line.',
+      ],
+    },
+    {
+      title: 'Storage',
+      lines: [
+        'Download images you want to keep.',
+        'Chat history is saved in IndexedDB when your browser supports it.',
+      ],
+    },
+  ]
+
+  if (workspace === 'banana') {
+    return [
+      {
+        title: 'Current model',
+        lines: [`${bananaModeLabel(opts.bananaMode)} · ${bananaModeModelId(opts.bananaMode)}`],
+      },
+      {
+        title: 'Modes',
+        lines: [
+          'Fast — Nano Banana 2, minimal thinking, fastest.',
+          'Thinking — Nano Banana 2, high thinking, balanced.',
+          'Pro — Nano Banana Pro, highest fidelity.',
+        ],
+      },
+      {
+        title: 'Resolution',
+        lines: [
+          '1K — ~1× cost, standard detail.',
+          '2K — ~2–4× cost, sharper.',
+          '4K — ~4–10× cost, max detail (uses Image API on the same model).',
+          'Banana has no separate quality knob — resolution is the main cost/detail control.',
+        ],
+      },
+      ...shared,
+    ]
   }
 
-  let searchEvidence: CapabilityReport['searchEvidence']
-  if (input.searchRequested === 'off') {
-    searchEvidence = 'off'
-  } else if (input.searchFallback) {
-    // Fallback is always reported; refine if we still got cites/calls after retry.
-    if (input.citationCount > 0) searchEvidence = 'cited'
-    else if (typeof input.searchCalls === 'number' && input.searchCalls > 0) searchEvidence = 'called'
-    else searchEvidence = 'fallback'
-  } else if (input.citationCount > 0) {
-    searchEvidence = 'cited'
-  } else if (typeof input.searchCalls === 'number' && input.searchCalls > 0) {
-    searchEvidence = 'called'
-  } else {
-    searchEvidence = 'none'
-  }
+  return [
+    {
+      title: 'Current model',
+      lines: [`${gptModeLabel(opts.gptMode)} · ${gptModeModelId(opts.gptMode)}`],
+    },
+    {
+      title: 'Modes',
+      lines: [
+        'Pro Thinking — gpt-5.4-image-2, high reasoning, multi-turn editing.',
+        'Direct — gpt-image-2, highest direct image quality, latest prompt only.',
+        'Direct: re-attach a previous result and restate prior instructions to continue editing.',
+      ],
+    },
+    {
+      title: 'Resolution & quality',
+      lines: [
+        'Resolution: 1K ~1×, 2K ~2–4×, 4K ~4–10× cost vs 1K (rough).',
+        'Quality control is Direct-only (auto / low / medium / high).',
+      ],
+    },
+    ...shared,
+  ]
+}
 
-  return {
-    mode: input.mode,
-    model: input.model,
-    thinking,
-    searchRequested: input.searchRequested,
-    searchUsed: input.searchUsed,
-    searchFallback: input.searchFallback,
-    searchEvidence,
-    citationCount: input.citationCount,
-    searchCalls: input.searchCalls,
-    imageOk: input.imageOk,
-  }
+function bananaReasoningEffort(mode: BananaMode): 'minimal' | 'high' {
+  return mode === 'fast' ? 'minimal' : 'high'
 }
 
 function turnToMessage(turn: Turn): ChatMessage {
@@ -143,70 +181,189 @@ function proxyHeaders(settings: Settings, apiPath: 'chat/completions' | 'images'
     Authorization: `Bearer ${settings.apiKey.trim()}`,
     'X-OR-Base-URL': settings.baseUrl.trim(),
     'X-OR-Path': apiPath,
-    'X-OR-Title': settings.siteTitle || 'GoogleBanana',
+    'X-OR-Title': 'GoogleBanana',
     'X-OR-Referer': typeof location !== 'undefined' ? location.origin : '',
   }
 }
 
-async function parseProxyResponse(res: Response): Promise<unknown> {
-  const raw = await res.text()
-  let data: unknown
-  try {
-    data = raw ? parsePossiblyPaddedJson(raw) : {}
-  } catch {
-    throw new Error(`Unexpected response (HTTP ${res.status}): ${raw.slice(0, 300)}`)
+export interface GenerateRequestOptions {
+  /** Optional. Aborting only stops local polling — the server job keeps running. */
+  signal?: AbortSignal
+  /** Called as soon as the server reserves a job id (before the large body upload). */
+  onJobStarted?: (jobId: string, claimToken: string) => void
+}
+
+const JOB_POLL_MS = 2_000
+/** Align with server PROXY_TIMEOUT_MS default — stop infinite client polling. */
+const JOB_POLL_TIMEOUT_MS = 600_000
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Polling aborted', 'AbortError'))
+      return
+    }
+    const timer = setTimeout(resolve, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(new DOMException('Polling aborted', 'AbortError'))
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/** Poll a server job until done/error. Safe to call again after reopening the tab. */
+export async function waitForServerJob(
+  jobId: string,
+  claimToken: string,
+  signal?: AbortSignal,
+): Promise<{ apiPath: 'chat/completions' | 'images'; data: unknown }> {
+  const deadline = Date.now() + JOB_POLL_TIMEOUT_MS
+
+  for (;;) {
+    if (signal?.aborted) throw new DOMException('Polling aborted', 'AbortError')
+    if (Date.now() > deadline) {
+      throw new Error(
+        'Timed out while waiting for the server job (10 minutes). Reopen this page to reclaim the result if generation still finished.',
+      )
+    }
+
+    try {
+      const res = await fetch(`/jobs/${encodeURIComponent(jobId)}`, {
+        signal,
+        headers: { 'X-Job-Claim-Token': claimToken },
+      })
+      const payload = (await res.json().catch(() => ({}))) as {
+        status?: string
+        apiPath?: string
+        data?: unknown
+        error?: { message?: string } | string
+      }
+
+      if (res.status === 404) {
+        throw new Error(
+          'Job not found. The server only keeps the newest 20 results; this one may have expired.',
+        )
+      }
+
+      if (res.status === 401 || res.status === 403) {
+        throw new Error(
+          typeof payload.error === 'string'
+            ? payload.error
+            : payload.error?.message || 'Invalid or missing job claim token.',
+        )
+      }
+
+      if (!res.ok) {
+        const msg =
+          typeof payload.error === 'string'
+            ? payload.error
+            : payload.error?.message || `Job status failed (HTTP ${res.status})`
+        throw new Error(msg)
+      }
+
+      if (payload.status === 'done') {
+        const apiPath =
+          payload.apiPath === 'images' ? 'images' : ('chat/completions' as const)
+        return { apiPath, data: payload.data }
+      }
+
+      if (payload.status === 'error') {
+        const msg =
+          typeof payload.error === 'string'
+            ? payload.error
+            : payload.error?.message || 'Generation job failed'
+        throw new Error(msg)
+      }
+
+      if (payload.status === 'accepted') {
+        // Reserved, but the request body never reached /run (tab closed too early).
+        throw new Error(
+          'This job was reserved but never started. Please regenerate — close the tab only after generation has begun.',
+        )
+      }
+    } catch (err) {
+      if (signal?.aborted) throw err
+      if (err instanceof Error && err.name === 'AbortError') throw err
+      // Fatal job errors should surface; transient network blips retry.
+      if (
+        err instanceof Error &&
+        !/Failed to fetch|NetworkError|Load failed|fetch/i.test(err.message) &&
+        err.name !== 'TypeError'
+      ) {
+        throw err
+      }
+    }
+
+    await sleep(JOB_POLL_MS, signal)
   }
-
-  if (!res.ok) {
-    const msg =
-      (data as { error?: { message?: string } })?.error?.message ||
-      `Request failed with HTTP ${res.status}`
-    throw new Error(msg)
-  }
-
-  const proxiedError = (data as { error?: { message?: string } })?.error?.message
-  if (proxiedError) throw new Error(proxiedError)
-
-  return data
 }
 
 /**
- * OpenRouter may prepend keep-alive whitespace or SSE-style comment lines
- * before the JSON object. JSON.parse allows whitespace, but not `: ping` lines.
+ * Two-phase server job:
+ * 1) reserve id + claim token (bookmark immediately — safe to close tab after this)
+ * 2) upload body and start OpenRouter work
+ * 3) poll until done
  */
-function parsePossiblyPaddedJson(raw: string): unknown {
-  const trimmed = raw.trim()
-  if (!trimmed) return {}
-  try {
-    return JSON.parse(trimmed)
-  } catch {
-    const start = trimmed.search(/[{[]/)
-    if (start <= 0) throw new Error('Response is not JSON')
-    return JSON.parse(trimmed.slice(start))
+async function requestViaServerJob(
+  settings: Settings,
+  apiPath: 'chat/completions' | 'images',
+  body: Record<string, unknown>,
+  opts?: GenerateRequestOptions,
+): Promise<unknown> {
+  const acceptRes = await fetch('/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal: opts?.signal,
+  })
+  const accepted = (await acceptRes.json().catch(() => ({}))) as {
+    id?: string
+    claimToken?: string
+    error?: { message?: string }
   }
+  if (!acceptRes.ok) {
+    throw new Error(accepted.error?.message || `Failed to reserve job (HTTP ${acceptRes.status})`)
+  }
+  if (!accepted.id || !accepted.claimToken) {
+    throw new Error('Server did not return a job id and claim token.')
+  }
+
+  // Bookmark before the large upload so a mid-request tab close can still reclaim.
+  opts?.onJobStarted?.(accepted.id, accepted.claimToken)
+
+  const runRes = await fetch(`/jobs/${encodeURIComponent(accepted.id)}/run`, {
+    method: 'POST',
+    headers: {
+      ...proxyHeaders(settings, apiPath),
+      'X-Job-Claim-Token': accepted.claimToken,
+    },
+    body: JSON.stringify(body),
+    signal: opts?.signal,
+  })
+  const started = (await runRes.json().catch(() => ({}))) as {
+    id?: string
+    status?: string
+    error?: { message?: string }
+  }
+  if (!runRes.ok && runRes.status !== 409) {
+    throw new Error(started.error?.message || `Failed to start job (HTTP ${runRes.status})`)
+  }
+
+  const { data } = await waitForServerJob(accepted.id, accepted.claimToken, opts?.signal)
+  return data
 }
 
-/** Client abort matching the proxy window (PROXY_TIMEOUT_MS, default 10 min). */
+/** @deprecated Prefer server jobs; kept for compatibility. */
 export function generationAbortSignal(timeoutMs = 600_000): AbortSignal {
   return AbortSignal.timeout(timeoutMs)
 }
 
-function extractCitations(message: {
-  annotations?: Array<{
-    type?: string
-    url_citation?: { url?: string; title?: string; content?: string }
-  }>
-}): Citation[] {
-  const citations: Citation[] = []
-  for (const ann of message.annotations ?? []) {
-    if (ann?.type !== 'url_citation' || !ann.url_citation?.url) continue
-    citations.push({
-      url: ann.url_citation.url,
-      title: ann.url_citation.title || ann.url_citation.url,
-      content: ann.url_citation.content,
-    })
-  }
-  return citations
+export function resultFromChatCompletion(data: unknown): GenerateResult {
+  return imagesFromChatCompletion(data)
+}
+
+export function resultFromImageApi(data: unknown): GenerateResult {
+  return imagesFromImageApi(data)
 }
 
 function imagesFromChatCompletion(data: unknown): GenerateResult {
@@ -217,15 +374,8 @@ function imagesFromChatCompletion(data: unknown): GenerateResult {
         images?: Array<{ image_url?: { url?: string } }>
         reasoning?: string
         reasoning_details?: unknown
-        annotations?: Array<{
-          type?: string
-          url_citation?: { url?: string; title?: string; content?: string }
-        }>
       }
     }>
-    usage?: {
-      server_tool_use?: { web_search_requests?: number }
-    }
   }
 
   const choice = payload?.choices?.[0]
@@ -258,9 +408,6 @@ function imagesFromChatCompletion(data: unknown): GenerateResult {
       ? message.reasoning.trim()
       : undefined
 
-  const citations = message ? extractCitations(message) : []
-  const searchCalls = payload?.usage?.server_tool_use?.web_search_requests
-
   // Last resort: some providers embed data-URL images inside markdown/text.
   if (images.length === 0 && text) {
     const embedded = text.match(/data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=\s]+/g)
@@ -284,8 +431,6 @@ function imagesFromChatCompletion(data: unknown): GenerateResult {
     text,
     images,
     reasoning,
-    citations: citations.length > 0 ? citations : undefined,
-    searchCalls: typeof searchCalls === 'number' ? searchCalls : undefined,
   }
 }
 
@@ -339,81 +484,84 @@ function latestUserReferences(history: Turn[]): Array<{ type: 'image_url'; image
   return []
 }
 
-function buildBananaTools(search: SearchGrounding): unknown[] | undefined {
-  if (search === 'off') return undefined
-
-  // Web + Image Search: prefer Google-native tool shape (NB2 Image Search).
-  // If OpenRouter/upstream rejects it, generateImage falls back to web-only.
-  if (search === 'web-image') {
-    return [
-      {
-        type: 'google_search',
-        search_types: ['web_search', 'image_search'],
-      },
-    ]
+/** Text context for Banana Image API (4K uses resolution, not chat image_size). */
+function bananaImagePrompt(history: Turn[]): string {
+  const lines: string[] = []
+  for (const t of history) {
+    if (t.error || t.pending) continue
+    if (t.text.trim()) {
+      lines.push(`${t.role === 'user' ? 'User' : 'Assistant'}: ${t.text.trim()}`)
+    }
   }
-
-  // Web-only: OpenRouter server tool (native Google search when available).
-  return [
-    {
-      type: 'openrouter:web_search',
-      parameters: {
-        engine: 'native',
-        max_results: 5,
-      },
-    },
-  ]
+  if (lines.length === 0) return 'Generate an image'
+  return lines.join('\n\n')
 }
 
-function withSearchHint(messages: ChatMessage[], search: SearchGrounding): ChatMessage[] {
-  if (search === 'off' || messages.length === 0) return messages
-
-  const hint =
-    search === 'web-image'
-      ? 'Use web search and image search grounding when helpful: look up current facts and accurate visual references before generating the image.'
-      : 'Use web search grounding when helpful: look up current facts before generating the image.'
-
-  // Prepend a light system-style user cue only if the latest user turn has no prior hint.
-  const last = messages[messages.length - 1]
-  if (last.role !== 'user') return messages
-
-  const content: ContentPart[] = [{ type: 'text', text: hint }, ...last.content]
-  return [...messages.slice(0, -1), { ...last, content }]
+/** Up to 14 reference images from the conversation (Image API input_references). */
+function bananaInputReferences(
+  history: Turn[],
+): Array<{ type: 'image_url'; image_url: { url: string } }> {
+  const refs: Array<{ type: 'image_url'; image_url: { url: string } }> = []
+  for (const t of history) {
+    if (t.error || t.pending) continue
+    for (const url of t.images) {
+      refs.push({ type: 'image_url', image_url: { url } })
+    }
+  }
+  return refs.slice(-14)
 }
 
 export async function generateImage(
   settings: Settings,
   history: Turn[],
   opts: GenerateOptions,
-  signal?: AbortSignal,
+  requestOpts?: GenerateRequestOptions,
 ): Promise<GenerateResult> {
-  return generateBananaImage(settings, history, opts, signal, {
-    searchRequested: opts.searchGrounding ?? 'off',
-    searchFallback: false,
-  })
+  return generateBananaImage(settings, history, opts, requestOpts)
 }
 
 async function generateBananaImage(
   settings: Settings,
   history: Turn[],
   opts: GenerateOptions,
-  signal: AbortSignal | undefined,
-  meta: { searchRequested: SearchGrounding; searchFallback: boolean },
+  requestOpts?: GenerateRequestOptions,
 ): Promise<GenerateResult> {
   if (!settings.apiKey.trim()) {
     throw new Error('No API key set. Open Settings and paste your OpenRouter API key.')
   }
 
   const bananaMode: BananaMode = opts.bananaMode ?? 'thinking'
-  const searchGrounding: SearchGrounding = opts.searchGrounding ?? 'off'
   const model = bananaModeModelId(bananaMode)
+
+  // Stable Banana slugs reject image_config.image_size 4K on chat/completions;
+  // OpenRouter's Image API accepts resolution 4K on the same model ids.
+  if (opts.imageSize === '4K') {
+    const input_references = bananaInputReferences(history)
+    const body: Record<string, unknown> = {
+      model,
+      prompt: bananaImagePrompt(history),
+      resolution: opts.imageSize,
+      aspect_ratio: opts.aspectRatio,
+      n: 1,
+    }
+    if (input_references.length > 0) {
+      body.input_references = input_references
+    }
+
+    const data = await requestViaServerJob(settings, 'images', body, requestOpts)
+    const result = imagesFromImageApi(data)
+    return {
+      ...result,
+      modelUsed: model,
+      bananaMode,
+    }
+  }
+
   const effort = bananaReasoningEffort(bananaMode)
-  const tools = buildBananaTools(searchGrounding)
-  const messages = withSearchHint(buildMessages(history), searchGrounding)
 
   const body: Record<string, unknown> = {
     model,
-    messages,
+    messages: buildMessages(history),
     modalities: ['image', 'text'],
     stream: false,
     reasoning: { effort, exclude: false },
@@ -423,58 +571,14 @@ async function generateBananaImage(
       image_size: opts.imageSize,
     },
   }
-  if (tools) body.tools = tools
 
-  const res = await fetch('/proxy', {
-    method: 'POST',
-    headers: proxyHeaders(settings, 'chat/completions'),
-    body: JSON.stringify(body),
-    signal,
-  })
-
-  // If Image Search native tool is rejected, retry once with web-only search.
-  if (!res.ok && searchGrounding === 'web-image') {
-    const raw = await res.text()
-    let msg = `Request failed with HTTP ${res.status}`
-    try {
-      const parsed = raw ? JSON.parse(raw) : {}
-      msg = (parsed as { error?: { message?: string } })?.error?.message || msg
-    } catch {
-      if (raw) msg = raw.slice(0, 300)
-    }
-    const looksLikeToolError = /tool|google_search|search_types|unsupported/i.test(msg)
-    if (looksLikeToolError) {
-      return generateBananaImage(
-        settings,
-        history,
-        { ...opts, searchGrounding: 'web' },
-        signal,
-        { searchRequested: meta.searchRequested, searchFallback: true },
-      )
-    }
-    throw new Error(msg)
-  }
-
-  const data = await parseProxyResponse(res)
+  const data = await requestViaServerJob(settings, 'chat/completions', body, requestOpts)
   const result = imagesFromChatCompletion(data)
-  const citationCount = result.citations?.length ?? 0
 
   return {
     ...result,
     modelUsed: model,
     bananaMode,
-    searchGrounding,
-    capability: buildCapabilityReport({
-      mode: bananaMode,
-      model,
-      searchRequested: meta.searchRequested,
-      searchUsed: searchGrounding,
-      searchFallback: meta.searchFallback || undefined,
-      reasoning: result.reasoning,
-      citationCount,
-      searchCalls: result.searchCalls,
-      imageOk: result.images.length > 0,
-    }),
   }
 }
 
@@ -486,7 +590,7 @@ async function generateProThinking(
   settings: Settings,
   history: Turn[],
   opts: GenerateOptions,
-  signal?: AbortSignal,
+  requestOpts?: GenerateRequestOptions,
 ): Promise<GenerateResult> {
   const body = {
     model: GPT_PRO_THINKING_MODEL,
@@ -502,14 +606,7 @@ async function generateProThinking(
     },
   }
 
-  const res = await fetch('/proxy', {
-    method: 'POST',
-    headers: proxyHeaders(settings, 'chat/completions'),
-    body: JSON.stringify(body),
-    signal,
-  })
-
-  const data = await parseProxyResponse(res)
+  const data = await requestViaServerJob(settings, 'chat/completions', body, requestOpts)
   return imagesFromChatCompletion(data)
 }
 
@@ -523,13 +620,13 @@ async function generateDirectGptImage2(
   settings: Settings,
   history: Turn[],
   opts: GenerateOptions,
-  signal?: AbortSignal,
+  requestOpts?: GenerateRequestOptions,
 ): Promise<GenerateResult> {
   const input_references = latestUserReferences(history)
   const body: Record<string, unknown> = {
     model: GPT_DIRECT_MODEL,
     prompt: latestUserPrompt(history),
-    quality: 'high',
+    quality: opts.imageQuality ?? 'high',
     aspect_ratio: opts.aspectRatio,
     resolution: opts.imageSize,
     n: 1,
@@ -547,14 +644,7 @@ async function generateDirectGptImage2(
     body.input_references = input_references
   }
 
-  const res = await fetch('/proxy', {
-    method: 'POST',
-    headers: proxyHeaders(settings, 'images'),
-    body: JSON.stringify(body),
-    signal,
-  })
-
-  const data = await parseProxyResponse(res)
+  const data = await requestViaServerJob(settings, 'images', body, requestOpts)
   return imagesFromImageApi(data)
 }
 
@@ -562,16 +652,16 @@ export async function generateGptImage(
   settings: Settings,
   history: Turn[],
   opts: GenerateOptions & { mode: GptImageMode },
-  signal?: AbortSignal,
+  requestOpts?: GenerateRequestOptions,
 ): Promise<GenerateResult> {
   if (!settings.apiKey.trim()) {
     throw new Error('No API key set. Open Settings and paste your OpenRouter API key.')
   }
 
   if (opts.mode === 'pro-thinking') {
-    return generateProThinking(settings, history, opts, signal)
+    return generateProThinking(settings, history, opts, requestOpts)
   }
-  return generateDirectGptImage2(settings, history, opts, signal)
+  return generateDirectGptImage2(settings, history, opts, requestOpts)
 }
 
 export function gptModeLabel(mode: GptImageMode): string {

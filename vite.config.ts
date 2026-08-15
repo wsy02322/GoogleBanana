@@ -15,6 +15,14 @@ export default defineConfig({
         target: PROXY_TARGET,
         changeOrigin: true,
       },
+      '/jobs': {
+        target: PROXY_TARGET,
+        changeOrigin: true,
+      },
+      '/healthz': {
+        target: PROXY_TARGET,
+        changeOrigin: true,
+      },
     },
   },
 })

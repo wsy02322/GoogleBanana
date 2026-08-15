@@ -3,34 +3,45 @@ import type {
   AspectRatio,
   BananaMode,
   GptImageMode,
+  ImageQuality,
   ImageSize,
-  SearchGrounding,
   SessionBucket,
   Settings,
   Turn,
   Workspace,
+  WorkspaceImagePreferences,
   WorkspaceSessions,
 } from './lib/types'
 import {
   loadSettings,
   saveSettings,
   loadWorkspaceSessions,
-  saveWorkspaceSessions,
+  loadWorkspaceSessionsAsync,
+  saveWorkspaceSessionsAsync,
+  emptyWorkspaceSessions,
   loadLastWorkspace,
   saveLastWorkspace,
+  loadWorkspaceImagePreferences,
+  saveWorkspaceImagePreferences,
   createConversation,
   conversationTitle,
+  loadPendingServerJobs,
+  upsertPendingServerJob,
+  removePendingServerJob,
+  reconcileOrphanPendingTurns,
 } from './lib/storage'
 import {
   generateImage,
   generateGptImage,
-  generationAbortSignal,
-  gptModeLabel,
+  waitForServerJob,
+  resultFromChatCompletion,
+  resultFromImageApi,
   gptModeModelId,
   bananaModeLabel,
   bananaModeModelId,
 } from './lib/openrouter'
 import Composer from './components/Composer'
+import InfoPopover, { InfoSection } from './components/InfoPopover'
 import Message from './components/Message'
 import SettingsModal from './components/SettingsModal'
 import Sidebar from './components/Sidebar'
@@ -40,8 +51,6 @@ import {
   SettingsIcon,
   SunIcon,
   MoonIcon,
-  SparklesIcon,
-  ArrowLeftIcon,
 } from './components/icons'
 
 function uid(): string {
@@ -56,9 +65,9 @@ function applyTheme(theme: Settings['theme']) {
 
 const EXAMPLE_PROMPTS = [
   'A photorealistic banana astronaut floating in space, cinematic lighting',
-  "Infographic of today's weather in Tokyo with accurate current conditions",
+  'A clear educational infographic explaining the water cycle with labeled arrows',
   'Logo for a fruit startup called "GoogleBanana", minimal flat vector',
-  'Use image search: a resplendent quetzal bird on a misty branch, natural light',
+  'A resplendent quetzal bird on a misty branch, natural light, photorealistic',
 ]
 
 const GPT_EXAMPLE_PROMPTS = [
@@ -73,18 +82,27 @@ export default function App() {
   const [workspaceSessions, setWorkspaceSessions] = useState<WorkspaceSessions>(() =>
     loadWorkspaceSessions(),
   )
+  const [sessionsReady, setSessionsReady] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [workspace, setWorkspace] = useState<Workspace>(() => loadLastWorkspace())
   const [gptMode, setGptMode] = useState<GptImageMode>('pro-thinking')
   const [bananaMode, setBananaMode] = useState<BananaMode>('thinking')
-  const [searchGrounding, setSearchGrounding] = useState<SearchGrounding>('off')
-  const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1')
-  const [imageSize, setImageSize] = useState<ImageSize>('1K')
-  const [busy, setBusy] = useState(false)
+  const [imagePreferences, setImagePreferences] = useState<WorkspaceImagePreferences>(() =>
+    loadWorkspaceImagePreferences(),
+  )
+  const [activeJobs, setActiveJobs] = useState<Partial<Record<Workspace, string>>>({})
+  const [storageWarning, setStorageWarning] = useState<string>()
+  const [focusApiKeyInSettings, setFocusApiKeyInSettings] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const sessions = workspaceSessions[workspace]
+  const currentImagePreferences = imagePreferences[workspace]
+  const busy = Boolean(activeJobs[workspace])
+
+  const setWorkspaceJob = (ws: Workspace, conversationId: string | undefined) => {
+    setActiveJobs((prev) => ({ ...prev, [ws]: conversationId }))
+  }
 
   const activeConversation = useMemo(() => {
     return (
@@ -95,8 +113,49 @@ export default function App() {
   const turns = useMemo(() => activeConversation?.turns ?? [], [activeConversation])
 
   useEffect(() => applyTheme(settings.theme), [settings.theme])
-  useEffect(() => saveWorkspaceSessions(workspaceSessions), [workspaceSessions])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const result = await loadWorkspaceSessionsAsync()
+        if (cancelled) return
+        setWorkspaceSessions(reconcileOrphanPendingTurns(result.sessions))
+        if (result.warning) setStorageWarning(result.warning)
+      } catch {
+        if (cancelled) return
+        setWorkspaceSessions(emptyWorkspaceSessions())
+        setStorageWarning(
+          'Could not restore chat history from browser storage. Download important images going forward.',
+        )
+      } finally {
+        if (!cancelled) setSessionsReady(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!sessionsReady) return
+    let cancelled = false
+    ;(async () => {
+      const result = await saveWorkspaceSessionsAsync(workspaceSessions)
+      if (cancelled) return
+      if (result.status === 'saved' && !result.warning) {
+        setStorageWarning(undefined)
+      } else if (result.warning) {
+        setStorageWarning(result.warning)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceSessions, sessionsReady])
+
   useEffect(() => saveLastWorkspace(workspace), [workspace])
+  useEffect(() => saveWorkspaceImagePreferences(imagePreferences), [imagePreferences])
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [turns, sessions.activeId, workspace])
@@ -105,6 +164,125 @@ export default function App() {
     if (!settings.apiKey.trim()) setShowSettings(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (!sessionsReady) return
+
+    let cancelled = false
+    const controllers: AbortController[] = []
+
+    const applyJobResult = (
+      ws: Workspace,
+      conversationId: string,
+      assistantTurnId: string,
+      apiPath: 'chat/completions' | 'images',
+      data: unknown,
+    ) => {
+      const parsed =
+        apiPath === 'images' ? resultFromImageApi(data) : resultFromChatCompletion(data)
+      updateConversationTurns(ws, conversationId, (prev) =>
+        prev.map((t) =>
+          t.id === assistantTurnId
+            ? {
+                ...t,
+                pending: false,
+                error: undefined,
+                text: parsed.text,
+                images: parsed.images,
+                reasoning: parsed.reasoning,
+              }
+            : t,
+        ),
+      )
+    }
+
+    const collectResumeJobs = (): ReturnType<typeof loadPendingServerJobs> => {
+      const byId = new Map<string, ReturnType<typeof loadPendingServerJobs>[number]>()
+      for (const job of loadPendingServerJobs()) {
+        byId.set(job.jobId, job)
+      }
+      // Also reclaim from conversation turns in case the pending-jobs list was lost.
+      for (const ws of ['banana', 'gpt'] as const) {
+        for (const conversation of workspaceSessions[ws].conversations) {
+          for (const turn of conversation.turns) {
+            if (
+              turn.pending &&
+              turn.serverJobId &&
+              turn.claimToken &&
+              !byId.has(turn.serverJobId)
+            ) {
+              byId.set(turn.serverJobId, {
+                jobId: turn.serverJobId,
+                claimToken: turn.claimToken,
+                workspace: ws,
+                conversationId: conversation.id,
+                assistantTurnId: turn.id,
+                createdAt: turn.createdAt,
+              })
+            }
+          }
+        }
+      }
+      return [...byId.values()]
+    }
+
+    const resumeOne = async (job: ReturnType<typeof loadPendingServerJobs>[number]) => {
+      const ac = new AbortController()
+      controllers.push(ac)
+      setWorkspaceJob(job.workspace, job.conversationId)
+      updateConversationTurns(job.workspace, job.conversationId, (prev) =>
+        prev.map((t) =>
+          t.id === job.assistantTurnId
+            ? {
+                ...t,
+                pending: true,
+                error: undefined,
+                serverJobId: job.jobId,
+                claimToken: job.claimToken,
+              }
+            : t,
+        ),
+      )
+
+      try {
+        const { apiPath, data } = await waitForServerJob(job.jobId, job.claimToken, ac.signal)
+        if (cancelled) return
+        applyJobResult(job.workspace, job.conversationId, job.assistantTurnId, apiPath, data)
+        removePendingServerJob(job.jobId)
+      } catch (err) {
+        if (cancelled || ac.signal.aborted) return
+        const message = err instanceof Error ? err.message : String(err)
+        updateConversationTurns(job.workspace, job.conversationId, (prev) =>
+          prev.map((t) =>
+            t.id === job.assistantTurnId ? { ...t, pending: false, error: message } : t,
+          ),
+        )
+        removePendingServerJob(job.jobId)
+      } finally {
+        if (!cancelled) {
+          setActiveJobs((prev) =>
+            prev[job.workspace] === job.conversationId
+              ? { ...prev, [job.workspace]: undefined }
+              : prev,
+          )
+        }
+      }
+    }
+
+    const pending = collectResumeJobs()
+    void (async () => {
+      for (const job of pending) {
+        if (cancelled) return
+        await resumeOne(job)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      for (const ac of controllers) ac.abort()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionsReady])
 
   const hasKey = useMemo(() => settings.apiKey.trim().length > 0, [settings.apiKey])
 
@@ -118,12 +296,15 @@ export default function App() {
     })
   }
 
-  const updateActiveTurns = (updater: Turn[] | ((prev: Turn[]) => Turn[])) => {
-    if (!activeConversation) return
-    updateWorkspaceBucket(workspace, (prev) => ({
+  const updateConversationTurns = (
+    ws: Workspace,
+    conversationId: string,
+    updater: Turn[] | ((prev: Turn[]) => Turn[]),
+  ) => {
+    updateWorkspaceBucket(ws, (prev) => ({
       ...prev,
       conversations: prev.conversations.map((c) => {
-        if (c.id !== prev.activeId) return c
+        if (c.id !== conversationId) return c
         const nextTurns = typeof updater === 'function' ? updater(c.turns) : updater
         const title = c.title === 'New chat' ? conversationTitle(nextTurns) : c.title
         return { ...c, turns: nextTurns, title, updatedAt: Date.now() }
@@ -134,16 +315,25 @@ export default function App() {
   const handleSaveSettings = (next: Settings) => {
     setSettings(next)
     saveSettings(next)
+    setFocusApiKeyInSettings(false)
+    setShowSettings(false)
+  }
+
+  const openSettingsForApiKey = () => {
+    setFocusApiKeyInSettings(true)
+    setShowSettings(true)
+  }
+
+  const closeSettings = () => {
+    setFocusApiKeyInSettings(false)
     setShowSettings(false)
   }
 
   const selectConversation = (id: string) => {
-    if (busy) return
     updateWorkspaceBucket(workspace, (prev) => ({ ...prev, activeId: id }))
   }
 
   const newChat = () => {
-    if (busy) return
     const current = sessions.conversations.find((c) => c.id === sessions.activeId)
     if (current && current.turns.length === 0) return
 
@@ -155,7 +345,7 @@ export default function App() {
   }
 
   const deleteConversation = (id: string) => {
-    if (busy) return
+    if (activeJobs[workspace] === id) return
     updateWorkspaceBucket(workspace, (prev) => {
       const remaining = prev.conversations.filter((c) => c.id !== id)
       if (remaining.length === 0) {
@@ -171,54 +361,80 @@ export default function App() {
   }
 
   const enterGptWorkspace = () => {
-    if (busy) return
     setWorkspace('gpt')
-    setImageSize((prev) => (prev === '1K' ? '2K' : prev))
   }
 
   const leaveGptWorkspace = () => {
-    if (busy) return
     setWorkspace('banana')
   }
 
+  const trackServerJob = (
+    jobId: string,
+    claimToken: string,
+    ws: Workspace,
+    conversationId: string,
+    assistantTurnId: string,
+  ) => {
+    upsertPendingServerJob({
+      jobId,
+      claimToken,
+      workspace: ws,
+      conversationId,
+      assistantTurnId,
+      createdAt: Date.now(),
+    })
+    updateConversationTurns(ws, conversationId, (prev) =>
+      prev.map((t) =>
+        t.id === assistantTurnId ? { ...t, serverJobId: jobId, claimToken } : t,
+      ),
+    )
+  }
+
   const runBananaGenerate = async (
+    ws: Workspace,
+    conversationId: string,
     history: Turn[],
     assistantId: string,
     mode: BananaMode,
-    search: SearchGrounding,
+    preferences = imagePreferences[ws],
   ) => {
     const result = await generateImage(
       settings,
       history,
       {
-        aspectRatio,
-        imageSize,
+        aspectRatio: preferences.aspectRatio,
+        imageSize: preferences.imageSize,
         bananaMode: mode,
-        searchGrounding: search,
       },
-      generationAbortSignal(),
+      {
+        onJobStarted: (jobId, claimToken) =>
+          trackServerJob(jobId, claimToken, ws, conversationId, assistantId),
+      },
     )
-    updateActiveTurns((prev) =>
-      prev.map((t) =>
+    updateConversationTurns(ws, conversationId, (prev) => {
+      const jobId = prev.find((t) => t.id === assistantId)?.serverJobId
+      if (jobId) removePendingServerJob(jobId)
+      return prev.map((t) =>
         t.id === assistantId
           ? {
               ...t,
               pending: false,
+              error: undefined,
               text: result.text,
               images: result.images,
               reasoning: result.reasoning,
-              citations: result.citations,
               bananaMode: result.bananaMode ?? mode,
-              searchGrounding: result.searchGrounding ?? search,
-              capability: result.capability,
             }
           : t,
-      ),
-    )
+      )
+    })
   }
 
   const send = async (text: string, images: string[]) => {
-    if (busy || !activeConversation) return
+    if (!sessionsReady || busy || !activeConversation) return
+    const jobWorkspace = workspace
+    const jobConversationId = activeConversation.id
+    const jobPreferences = imagePreferences[jobWorkspace]
     const userTurn: Turn = { id: uid(), role: 'user', text, images, createdAt: Date.now() }
     const assistantTurn: Turn = {
       id: uid(),
@@ -227,44 +443,58 @@ export default function App() {
       images: [],
       createdAt: Date.now(),
       pending: true,
-      bananaMode: workspace === 'banana' ? bananaMode : undefined,
-      searchGrounding: workspace === 'banana' ? searchGrounding : undefined,
-      gptMode: workspace === 'gpt' ? gptMode : undefined,
+      bananaMode: jobWorkspace === 'banana' ? bananaMode : undefined,
+      gptMode: jobWorkspace === 'gpt' ? gptMode : undefined,
     }
     const history = [...turns, userTurn]
-    updateActiveTurns([...history, assistantTurn])
-    setBusy(true)
+    updateConversationTurns(jobWorkspace, jobConversationId, [...history, assistantTurn])
+    setWorkspaceJob(jobWorkspace, jobConversationId)
 
     try {
-      if (workspace === 'gpt') {
+      if (jobWorkspace === 'gpt') {
         const result = await generateGptImage(
           settings,
           history,
           {
-            aspectRatio,
-            imageSize,
+            aspectRatio: jobPreferences.aspectRatio,
+            imageSize: jobPreferences.imageSize,
+            imageQuality: jobPreferences.imageQuality,
             mode: gptMode,
           },
-          generationAbortSignal(),
+          {
+            onJobStarted: (jobId, claimToken) =>
+              trackServerJob(jobId, claimToken, jobWorkspace, jobConversationId, assistantTurn.id),
+          },
         )
-        updateActiveTurns((prev) =>
-          prev.map((t) =>
+        updateConversationTurns(jobWorkspace, jobConversationId, (prev) => {
+          const jobId = prev.find((t) => t.id === assistantTurn.id)?.serverJobId
+          if (jobId) removePendingServerJob(jobId)
+          return prev.map((t) =>
             t.id === assistantTurn.id
               ? {
                   ...t,
                   pending: false,
+                  error: undefined,
                   text: result.text,
                   images: result.images,
                   reasoning: result.reasoning,
                   gptMode,
                 }
               : t,
-          ),
-        )
+          )
+        })
       } else {
-        await runBananaGenerate(history, assistantTurn.id, bananaMode, searchGrounding)
+        await runBananaGenerate(
+          jobWorkspace,
+          jobConversationId,
+          history,
+          assistantTurn.id,
+          bananaMode,
+          jobPreferences,
+        )
       }
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return
       const raw = err instanceof Error ? err.message : String(err)
       let message =
         err instanceof Error && err.name === 'TimeoutError'
@@ -272,18 +502,20 @@ export default function App() {
           : raw
       if (raw === 'Failed to fetch' || (err instanceof TypeError && /fetch/i.test(raw))) {
         message =
-          'Connection lost while waiting for the image (common on mobile after ~2 minutes). Update to the latest server build, stay on this page, or retry on Wi‑Fi.'
+          'Lost connection while claiming the result. Reopen this page to reclaim it if the server job still finished (last 20 results are kept briefly).'
       }
-      updateActiveTurns((prev) =>
+      updateConversationTurns(jobWorkspace, jobConversationId, (prev) =>
         prev.map((t) => (t.id === assistantTurn.id ? { ...t, pending: false, error: message } : t)),
       )
     } finally {
-      setBusy(false)
+      setWorkspaceJob(jobWorkspace, undefined)
     }
   }
 
   const redoWithPro = async (assistantTurn: Turn) => {
-    if (busy || workspace !== 'banana' || !activeConversation) return
+    if (!sessionsReady || busy || workspace !== 'banana' || !activeConversation) return
+    const jobWorkspace = workspace
+    const jobConversationId = activeConversation.id
     const idx = turns.findIndex((t) => t.id === assistantTurn.id)
     if (idx <= 0) return
     const history = turns.slice(0, idx).filter((t) => !t.error && !t.pending)
@@ -296,27 +528,41 @@ export default function App() {
       createdAt: Date.now(),
       pending: true,
       bananaMode: 'pro',
-      searchGrounding: assistantTurn.searchGrounding ?? searchGrounding,
     }
-    updateActiveTurns([...turns, redoTurn])
-    setBusy(true)
+    updateConversationTurns(jobWorkspace, jobConversationId, [...turns, redoTurn])
+    setWorkspaceJob(jobWorkspace, jobConversationId)
     setBananaMode('pro')
 
     try {
       await runBananaGenerate(
+        jobWorkspace,
+        jobConversationId,
         history,
         redoTurn.id,
         'pro',
-        assistantTurn.searchGrounding ?? searchGrounding,
+        imagePreferences[jobWorkspace],
       )
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return
       const message = err instanceof Error ? err.message : String(err)
-      updateActiveTurns((prev) =>
+      updateConversationTurns(jobWorkspace, jobConversationId, (prev) =>
         prev.map((t) => (t.id === redoTurn.id ? { ...t, pending: false, error: message } : t)),
       )
     } finally {
-      setBusy(false)
+      setWorkspaceJob(jobWorkspace, undefined)
     }
+  }
+
+  const updateImagePreference = <
+    K extends keyof WorkspaceImagePreferences[Workspace],
+  >(
+    key: K,
+    value: WorkspaceImagePreferences[Workspace][K],
+  ) => {
+    setImagePreferences((prev) => ({
+      ...prev,
+      [workspace]: { ...prev[workspace], [key]: value },
+    }))
   }
 
   const toggleTheme = () => {
@@ -328,10 +574,13 @@ export default function App() {
 
   const isEmpty = turns.length === 0
   const emptyPrompts = workspace === 'gpt' ? GPT_EXAMPLE_PROMPTS : EXAMPLE_PROMPTS
-  const modelBadge =
+  const workspaceTitle = workspace === 'gpt' ? 'GPT Image' : 'GoogleBanana'
+  const modeLine =
     workspace === 'gpt'
-      ? `${gptModeLabel(gptMode)} · ${gptModeModelId(gptMode)}`
+      ? `${gptMode === 'pro-thinking' ? 'Pro Thinking' : 'Direct'} · ${gptModeModelId(gptMode)}`
       : `${bananaModeLabel(bananaMode)} · ${bananaModeModelId(bananaMode)}`
+  const switchLabel = workspace === 'gpt' ? 'switch to Banana' : 'switch to ChatGPT'
+  const switchAction = workspace === 'gpt' ? leaveGptWorkspace : enterGptWorkspace
 
   return (
     <div className="flex h-full bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100">
@@ -344,51 +593,60 @@ export default function App() {
         onSelect={selectConversation}
         onNewChat={newChat}
         onDelete={deleteConversation}
+        busyConversationId={activeJobs[workspace]}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-800">
-          <div className="flex min-w-0 items-center gap-2">
+        <header className="flex items-center justify-between gap-2 border-b border-gray-100 px-3 py-2.5 dark:border-gray-800 sm:px-4 sm:py-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="rounded-full p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 lg:hidden"
+              className="shrink-0 rounded-full p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 lg:hidden"
               aria-label="Open chat history"
               title="Chat history"
             >
               <MenuIcon className="h-5 w-5" />
             </button>
-            {workspace === 'gpt' ? (
-              <button
-                onClick={leaveGptWorkspace}
-                className="rounded-full p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
-                aria-label="Back to nano banana"
-                title="Back to nano banana"
-              >
-                <ArrowLeftIcon className="h-5 w-5" />
-              </button>
-            ) : (
-              <span className="text-2xl">🍌</span>
-            )}
-            <h1 className="truncate text-lg font-semibold">
-              {workspace === 'gpt' ? 'GPT Image' : 'GoogleBanana'}
-            </h1>
-            <span className="hidden max-w-[14rem] truncate rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500 sm:inline dark:bg-gray-800 dark:text-gray-400 lg:max-w-xs">
-              {modelBadge}
+
+            <span className="shrink-0 text-xl sm:text-2xl" aria-hidden>
+              {workspace === 'gpt' ? '✨' : '🍌'}
             </span>
-          </div>
-          <div className="flex items-center gap-1">
-            {workspace === 'banana' && (
+
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+                <h1 className="truncate text-base font-semibold sm:text-lg">{workspaceTitle}</h1>
+                <span
+                  className="hidden max-w-full truncate text-xs text-gray-500 dark:text-gray-400 sm:inline sm:text-sm"
+                  title={modeLine}
+                >
+                  {modeLine}
+                </span>
+                <span className="sm:hidden">
+                  <InfoPopover label="Current model — tap for details" title={modeLine} placement="below">
+                    <InfoSection title="Model" lines={[modeLine]} />
+                    <InfoSection
+                      title="While generating"
+                      lines={[
+                        'Generation keeps running on the server.',
+                        'Close this tab and reopen to claim the result.',
+                      ]}
+                    />
+                  </InfoPopover>
+                </span>
+              </div>
               <button
-                onClick={enterGptWorkspace}
-                disabled={busy}
-                className="flex items-center gap-1.5 rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:border-gray-300 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-200 dark:hover:border-gray-600 dark:hover:bg-gray-900"
-                aria-label="Open GPT Image studio"
-                title="GPT Image · Pro Thinking / Direct"
+                type="button"
+                onClick={switchAction}
+                className="mt-0.5 text-left text-xs font-medium text-banana-600 underline-offset-2 hover:underline dark:text-banana-400"
+                aria-label={switchLabel}
+                title="Switching workspaces keeps generation running. Closing this tab is OK — reopen to claim the result (server keeps the newest 20)."
               >
-                <SparklesIcon className="h-4 w-4" />
-                <span className="hidden sm:inline">GPT Image</span>
+                ({switchLabel})
               </button>
-            )}
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
             <button
               onClick={newChat}
               className="rounded-full p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
@@ -418,7 +676,12 @@ export default function App() {
         </header>
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
-          {isEmpty ? (
+          {!sessionsReady ? (
+            <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center px-4 text-center">
+              <div className="mb-4 text-6xl">{workspace === 'gpt' ? '✨' : '🍌'}</div>
+              <p className="text-gray-500 dark:text-gray-400">Restoring chat history…</p>
+            </div>
+          ) : isEmpty ? (
             <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center px-4 text-center">
               <div className="mb-4 text-6xl">{workspace === 'gpt' ? '✨' : '🍌'}</div>
               <h2 className="mb-2 text-2xl font-semibold">
@@ -431,14 +694,20 @@ export default function App() {
                   ? 'Add your API key in Settings to get started.'
                   : workspace === 'gpt'
                     ? 'Pick Pro Thinking or Direct below, then describe an image.'
-                    : 'Pick Fast / Thinking / Pro, optional search grounding, then describe an image.'}
+                    : 'Pick Fast / Thinking / Pro, then describe an image.'}
               </p>
               <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2">
                 {emptyPrompts.map((p) => (
                   <button
                     key={p}
-                    disabled={!hasKey || busy}
-                    onClick={() => send(p, [])}
+                    disabled={busy}
+                    onClick={() => {
+                      if (!hasKey) {
+                        openSettingsForApiKey()
+                        return
+                      }
+                      if (sessionsReady) send(p, [])
+                    }}
                     className="rounded-xl border border-gray-200 p-3 text-left text-sm text-gray-700 transition hover:border-banana-400 hover:bg-banana-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-800 dark:text-gray-300 dark:hover:border-banana-400 dark:hover:bg-gray-900"
                   >
                     {p}
@@ -462,18 +731,26 @@ export default function App() {
 
         <div className="border-t border-gray-100 px-4 py-4 dark:border-gray-800">
           <Composer
-            disabled={!hasKey || busy}
+            busy={busy}
+            hasKey={hasKey}
+            sessionsReady={sessionsReady}
+            storageWarning={storageWarning}
             workspace={workspace}
             gptMode={gptMode}
             bananaMode={bananaMode}
-            searchGrounding={searchGrounding}
-            aspectRatio={aspectRatio}
-            imageSize={imageSize}
+            aspectRatio={currentImagePreferences.aspectRatio}
+            imageSize={currentImagePreferences.imageSize}
+            imageQuality={currentImagePreferences.imageQuality}
             onChangeGptMode={setGptMode}
             onChangeBananaMode={setBananaMode}
-            onChangeSearchGrounding={setSearchGrounding}
-            onChangeAspectRatio={setAspectRatio}
-            onChangeImageSize={setImageSize}
+            onChangeAspectRatio={(value: AspectRatio) =>
+              updateImagePreference('aspectRatio', value)
+            }
+            onChangeImageSize={(value: ImageSize) => updateImagePreference('imageSize', value)}
+            onChangeImageQuality={(value: ImageQuality) =>
+              updateImagePreference('imageQuality', value)
+            }
+            onNeedApiKey={openSettingsForApiKey}
             onSend={send}
           />
         </div>
@@ -482,8 +759,9 @@ export default function App() {
       {showSettings && (
         <SettingsModal
           settings={settings}
+          focusApiKey={focusApiKeyInSettings}
           onSave={handleSaveSettings}
-          onClose={() => setShowSettings(false)}
+          onClose={closeSettings}
         />
       )}
     </div>

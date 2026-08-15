@@ -1,22 +1,30 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Settings } from '../lib/types'
 import { MODEL_OPTIONS, DEFAULT_SETTINGS } from '../lib/storage'
 import { CloseIcon } from './icons'
 
 interface Props {
   settings: Settings
+  focusApiKey?: boolean
   onSave: (settings: Settings) => void
   onClose: () => void
 }
 
-export default function SettingsModal({ settings, onSave, onClose }: Props) {
+export default function SettingsModal({ settings, focusApiKey, onSave, onClose }: Props) {
   const [draft, setDraft] = useState<Settings>(settings)
   const [showKey, setShowKey] = useState(false)
+  const apiKeyRef = useRef<HTMLInputElement>(null)
 
   const update = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setDraft((d) => ({ ...d, [key]: value }))
 
   const modelIsCustom = !MODEL_OPTIONS.some((m) => m.id === draft.model)
+
+  useEffect(() => {
+    if (!focusApiKey) return
+    apiKeyRef.current?.focus()
+    apiKeyRef.current?.select()
+  }, [focusApiKey])
 
   return (
     <div
@@ -42,6 +50,7 @@ export default function SettingsModal({ settings, onSave, onClose }: Props) {
           <Field label="API Key" hint="Shared by Banana and GPT Image. Stored only in your browser.">
             <div className="flex gap-2">
               <input
+                ref={apiKeyRef}
                 type={showKey ? 'text' : 'password'}
                 value={draft.apiKey}
                 onChange={(e) => update('apiKey', e.target.value)}
@@ -96,6 +105,18 @@ export default function SettingsModal({ settings, onSave, onClose }: Props) {
                 className="mt-2 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-banana-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
               />
             )}
+          </Field>
+
+          <Field label="Theme" hint="Choose a fixed theme or follow your device setting.">
+            <select
+              value={draft.theme}
+              onChange={(e) => update('theme', e.target.value as Settings['theme'])}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-banana-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+            >
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
           </Field>
         </div>
 

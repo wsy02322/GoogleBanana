@@ -2,15 +2,29 @@ export interface Settings {
   baseUrl: string
   apiKey: string
   model: string
-  siteTitle: string
   theme: 'light' | 'dark' | 'system'
 }
 
 export type AspectRatio = '1:1' | '16:9' | '9:16' | '4:3' | '3:4'
+/** Shared resolution tier for Banana + GPT (image_config / Images API). */
 export type ImageSize = '1K' | '2K' | '4K'
+/**
+ * GPT Images API quality knob (openai/gpt-image-2).
+ * Banana / Pro Thinking chat models do not expose this parameter.
+ */
+export type ImageQuality = 'auto' | 'low' | 'medium' | 'high'
 
 /** Banana = Gemini nano-banana path; gpt = OpenRouter GPT image studio */
 export type Workspace = 'banana' | 'gpt'
+
+export interface ImagePreferences {
+  aspectRatio: AspectRatio
+  imageSize: ImageSize
+  imageQuality: ImageQuality
+}
+
+/** Each workspace remembers its own output controls. */
+export type WorkspaceImagePreferences = Record<Workspace, ImagePreferences>
 
 /**
  * Mode A: chat multimodal with high reasoning effort.
@@ -26,55 +40,12 @@ export type GptImageMode = 'pro-thinking' | 'direct'
  */
 export type BananaMode = 'fast' | 'thinking' | 'pro'
 
-/** Grounding / search for banana image generation */
-export type SearchGrounding = 'off' | 'web' | 'web-image'
-
-export interface Citation {
-  url: string
-  title: string
-  content?: string
-}
-
-/**
- * Compact per-turn report so users can see whether intelligence features
- * actually engaged (vs requested but silent / fell back).
- *
- * Search evidence is intentionally graded — we can prove citations entered the
- * *response*, but the API does not expose whether those results changed pixels.
- */
-export interface CapabilityReport {
-  mode: BananaMode
-  model: string
-  /** Whether the API returned visible reasoning text */
-  thinking: 'returned' | 'not_returned' | 'minimal'
-  /** What the user asked for */
-  searchRequested: SearchGrounding
-  /** What was actually used after any fallback */
-  searchUsed: SearchGrounding
-  /** True when Web+Image was requested but only Web could be used */
-  searchFallback?: boolean
-  /**
-   * Strongest verifiable search evidence from the API response:
-   * - off: not requested
-   * - fallback: native image-search tool rejected; retried as web
-   * - none: requested, but no search calls and no citations
-   * - called: upstream reported search tool calls, but no citations
-   * - cited: url_citation annotations present (results entered the reply)
-   */
-  searchEvidence: 'off' | 'fallback' | 'none' | 'called' | 'cited'
-  /** Number of url_citation annotations returned */
-  citationCount: number
-  /** Upstream web_search_requests if reported in usage */
-  searchCalls?: number
-  /** Image generated successfully */
-  imageOk: boolean
-}
-
 export interface Turn {
   id: string
   role: 'user' | 'assistant'
   text: string
-  images: string[] // data URLs
+  /** Runtime image URLs (usually data URLs). Persisted as IndexedDB Blobs when possible. */
+  images: string[]
   createdAt: number
   pending?: boolean
   error?: string
@@ -82,10 +53,17 @@ export interface Turn {
   bananaMode?: BananaMode
   /** GPT Image studio mode (assistant turns) */
   gptMode?: GptImageMode
-  searchGrounding?: SearchGrounding
+  /** Server async job id — survives tab close; reclaim via GET /jobs/:id */
+  serverJobId?: string
+  /** Capability token required to reclaim the server job result. */
+  claimToken?: string
   reasoning?: string
-  citations?: Citation[]
-  capability?: CapabilityReport
+  /** @deprecated Kept optional so older localStorage chats still load. */
+  searchGrounding?: string
+  /** @deprecated Kept optional so older localStorage chats still load. */
+  citations?: Array<{ url: string; title: string; content?: string }>
+  /** @deprecated Kept optional so older localStorage chats still load. */
+  capability?: unknown
 }
 
 export interface Conversation {
@@ -109,6 +87,16 @@ export interface SessionBucket {
 export interface WorkspaceSessions {
   banana: SessionBucket
   gpt: SessionBucket
+}
+
+/** Browser bookmark for a server-side generation job (reclaim after tab close). */
+export interface PendingServerJob {
+  jobId: string
+  claimToken: string
+  workspace: Workspace
+  conversationId: string
+  assistantTurnId: string
+  createdAt: number
 }
 
 /** @deprecated Use SessionBucket / WorkspaceSessions — kept for migration typing. */

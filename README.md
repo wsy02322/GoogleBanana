@@ -52,7 +52,45 @@ By default the container listens on `127.0.0.1:8787`. Put Nginx or Caddy in
 front for HTTPS. Set `proxy_read_timeout` (Nginx) or equivalent to at least
 **600s** — GPT Pro Thinking image generation can take several minutes.
 
+If OpenRouter shows the job as complete but the page says connection lost, the
+browser tab dropped while downloading a large/slow response. Keep the tab open,
+prefer Wi‑Fi for Pro Thinking / 4K, and redeploy a build that streams proxy
+responses with idle heartbeats (`PROXY_HEARTBEAT_MS`, default 8000).
+
 Health check: `GET /healthz` → `{"ok":true}`.
+
+#### Run an old and new version side by side
+
+Give each Compose project a unique container name and host port. For the new
+copy, change `docker-compose.yml` to:
+
+```yaml
+services:
+  googlebanana:
+    container_name: googlebanana-v2
+    ports:
+      - "0.0.0.0:8788:8787"
+```
+
+Then start it from the new checkout:
+
+```bash
+cd /opt/GoogleBanana-v2
+docker compose -p googlebanana-v2 up -d --build
+curl http://127.0.0.1:8788/healthz
+```
+
+The existing instance can remain on port `8787`; the new one is available at
+`http://SERVER_IP:8788`. Restrict the firewall or bind to `127.0.0.1` and use a
+reverse proxy if the service should not be publicly reachable.
+
+Without Compose, the equivalent is:
+
+```bash
+docker build --no-cache -t googlebanana:v2 .
+docker run -d --name googlebanana-v2 --restart unless-stopped \
+  -p 8788:8787 -e PROXY_TIMEOUT_MS=600000 googlebanana:v2
+```
 
 #### Reverse proxy examples
 
@@ -98,7 +136,20 @@ location / {
 - **API Key** — your OpenRouter (or compatible) key, stored in `localStorage`.
 - **API Base URL** — defaults to `https://openrouter.ai/api/v1`.
 - **Model** — image-capable model id (Banana workspace fallback label; mode chips pick the live model).
+- **Theme** — follow the device theme, or force light/dark.
 
 Banana and GPT Image keep **separate chat histories** in the sidebar. Switching
 workspaces only changes which chat list is shown. Settings (API key, base URL,
-theme) are shared.
+theme) are shared. Each workspace remembers its own aspect ratio, resolution,
+and quality controls.
+
+Chat text and images are stored in the browser with **IndexedDB** when available
+(images as Blobs). If IndexedDB is unavailable, the app falls back to limited
+`localStorage` and may trim older images. Download any image you want to keep.
+
+Generation also runs as a **server job** (two-phase): the browser first reserves
+a job id + claim token, then uploads the request body. Closing the tab after
+reserve does not cancel OpenRouter work. Reopen the page to claim the result
+with the stored claim token. The server keeps only the **newest 20** job results
+on disk (`data/jobs/`, `JOB_CACHE_MAX`). API keys are used in memory for the job
+and are not written to disk.
