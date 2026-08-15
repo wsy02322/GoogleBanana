@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   AspectRatio,
   BananaMode,
@@ -17,7 +17,9 @@ import InfoPopover, { InfoSection } from './InfoPopover'
 import { ImageIcon, SendIcon, CloseIcon } from './icons'
 
 interface Props {
-  disabled: boolean
+  busy: boolean
+  hasKey: boolean
+  sessionsReady: boolean
   storageWarning?: string
   workspace: Workspace
   gptMode: GptImageMode
@@ -30,6 +32,7 @@ interface Props {
   onChangeAspectRatio: (v: AspectRatio) => void
   onChangeImageSize: (v: ImageSize) => void
   onChangeImageQuality: (v: ImageQuality) => void
+  onNeedApiKey: () => void
   onSend: (text: string, images: string[]) => void
 }
 
@@ -57,7 +60,9 @@ const BANANA_MODES: { id: BananaMode; label: string }[] = [
 ]
 
 export default function Composer({
-  disabled,
+  busy,
+  hasKey,
+  sessionsReady,
   storageWarning,
   workspace,
   gptMode,
@@ -70,30 +75,60 @@ export default function Composer({
   onChangeAspectRatio,
   onChangeImageSize,
   onChangeImageQuality,
+  onNeedApiKey,
   onSend,
 }: Props) {
   const [text, setText] = useState('')
   const [images, setImages] = useState<string[]>([])
+  const [actionHint, setActionHint] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const canSend = !disabled && (text.trim().length > 0 || images.length > 0)
   const showGptQuality = workspace === 'gpt' && gptMode === 'direct'
   const infoSections = composerInfoSections(workspace, { gptMode, bananaMode })
   const infoTitle = workspace === 'gpt' ? 'GPT Image tips' : 'Banana tips'
 
+  const hasContent = text.trim().length > 0 || images.length > 0
+  const controlsDisabled = busy
+  const sendInteractive = hasContent && !busy
+  const sendDisabled = !sendInteractive
+
+  useEffect(() => {
+    if (sessionsReady && actionHint === 'Preparing your chat history…') {
+      setActionHint(null)
+    }
+  }, [sessionsReady, actionHint])
+
   const handleFiles = async (files: FileList | null) => {
     if (!files) return
-    const urls = await Promise.all(
-      Array.from(files)
-        .filter((f) => f.type.startsWith('image/'))
-        .map(fileToDataUrl),
-    )
-    setImages((prev) => [...prev, ...urls])
+    try {
+      const urls = await Promise.all(
+        Array.from(files)
+          .filter((f) => f.type.startsWith('image/'))
+          .map(fileToDataUrl),
+      )
+      setImages((prev) => [...prev, ...urls])
+      setActionHint(null)
+    } catch {
+      setActionHint('Could not attach that image. Try a different file.')
+    }
     if (fileRef.current) fileRef.current.value = ''
   }
 
   const submit = () => {
-    if (!canSend) return
+    if (!hasContent || busy) return
+
+    if (!hasKey) {
+      setActionHint('Add your OpenRouter API key in Settings to generate.')
+      onNeedApiKey()
+      return
+    }
+
+    if (!sessionsReady) {
+      setActionHint('Preparing your chat history…')
+      return
+    }
+
+    setActionHint(null)
     onSend(text.trim(), images)
     setText('')
     setImages([])
@@ -109,7 +144,7 @@ export default function Composer({
               <button
                 key={m.id}
                 type="button"
-                disabled={disabled}
+                disabled={controlsDisabled}
                 onClick={() => onChangeGptMode(m.id)}
                 title={m.hint}
                 className={pillClass(active)}
@@ -137,7 +172,7 @@ export default function Composer({
               <button
                 key={m.id}
                 type="button"
-                disabled={disabled}
+                disabled={controlsDisabled}
                 onClick={() => onChangeBananaMode(m.id)}
                 title={bananaModeHint(m.id)}
                 className={pillClass(active)}
@@ -179,7 +214,15 @@ export default function Composer({
 
         <textarea
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value)
+            if (actionHint && actionHint !== 'Preparing your chat history…') {
+              setActionHint(null)
+            }
+          }}
+          onCompositionEnd={(e) => {
+            setText(e.currentTarget.value)
+          }}
           rows={1}
           placeholder={
             workspace === 'gpt'
@@ -187,6 +230,7 @@ export default function Composer({
               : 'Describe an image, or attach one to edit…'
           }
           className="max-h-40 w-full resize-none bg-transparent px-2 py-1 text-gray-900 outline-none placeholder:text-gray-400 dark:text-gray-100"
+          aria-label="Image prompt"
         />
 
         <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -199,12 +243,14 @@ export default function Composer({
             onChange={(e) => handleFiles(e.target.files)}
           />
           <button
+            type="button"
             onClick={() => fileRef.current?.click()}
-            className="rounded-full p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700"
-            aria-label="Attach image"
-            title="Attach reference image"
+            className="flex items-center gap-1 rounded-full border border-dashed border-gray-300 px-2.5 py-2 text-gray-500 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
+            aria-label="Attach reference image"
+            title="Attach a reference image (optional)"
           >
             <ImageIcon className="h-5 w-5" />
+            <span className="text-xs">Attach</span>
           </button>
 
           <SelectPill
@@ -212,12 +258,14 @@ export default function Composer({
             options={ASPECT_RATIOS.map((o) => ({ value: o, label: o }))}
             onChange={(v) => onChangeAspectRatio(v as AspectRatio)}
             title="Aspect ratio"
+            disabled={controlsDisabled}
           />
           <SelectPill
             value={imageSize}
             options={IMAGE_SIZES.map((o) => ({ value: o, label: o }))}
             onChange={(v) => onChangeImageSize(v as ImageSize)}
             title="Resolution — 1K ~1×, 2K ~2–4×, 4K ~4–10× cost vs 1K (rough); higher = more detail"
+            disabled={controlsDisabled}
           />
           {showGptQuality && (
             <SelectPill
@@ -225,21 +273,53 @@ export default function Composer({
               options={IMAGE_QUALITIES.map((o) => ({ value: o, label: imageQualityCostHint(o) }))}
               onChange={(v) => onChangeImageQuality(v as ImageQuality)}
               title="Quality (GPT Direct only) — low ~1×, medium ~2×, high ~4× cost (rough); higher = better fidelity"
+              disabled={controlsDisabled}
             />
           )}
 
           <div className="flex-1" />
 
           <button
+            type="button"
             onClick={submit}
-            disabled={!canSend}
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-900 text-white transition enabled:hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-banana-400 dark:text-gray-900 dark:enabled:hover:bg-banana-300"
-            aria-label="Generate"
+            disabled={sendDisabled}
+            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white shadow-sm transition ${
+              sendInteractive
+                ? 'bg-gray-900 hover:bg-gray-700 dark:bg-banana-400 dark:text-gray-900 dark:hover:bg-banana-300'
+                : 'cursor-not-allowed bg-gray-300 text-gray-500 dark:bg-gray-700 dark:text-gray-500'
+            }`}
+            aria-label={hasKey ? 'Generate image' : 'Generate — API key required'}
+            title={
+              !hasContent
+                ? 'Type a prompt or attach an image'
+                : busy
+                  ? 'Generation in progress'
+                  : !hasKey
+                    ? 'Add your API key in Settings'
+                    : !sessionsReady
+                      ? 'Preparing chat history…'
+                      : 'Generate'
+            }
           >
-            <SendIcon className="h-5 w-5" />
+            {!sessionsReady && hasContent && !busy ? (
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            ) : (
+              <SendIcon className="h-5 w-5" />
+            )}
           </button>
         </div>
       </div>
+
+      {!sessionsReady && hasContent && !actionHint && (
+        <p className="mt-2 text-center text-xs text-gray-500 dark:text-gray-400">
+          Restoring chat history… you can keep typing.
+        </p>
+      )}
+      {actionHint && (
+        <p className="mt-2 text-center text-xs font-medium text-amber-700 dark:text-amber-300">
+          {actionHint}
+        </p>
+      )}
       {storageWarning && (
         <p className="mt-1 text-center text-xs font-medium leading-snug text-amber-700 dark:text-amber-300">
           {storageWarning}
@@ -260,18 +340,21 @@ function SelectPill({
   options,
   onChange,
   title,
+  disabled,
 }: {
   value: string
   options: Array<{ value: string; label: string }>
   onChange: (v: string) => void
   title: string
+  disabled?: boolean
 }) {
   return (
     <select
       title={title}
       value={value}
+      disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
-      className="max-w-[11rem] rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600 outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+      className="max-w-[11rem] rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600 outline-none disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
     >
       {options.map((o) => (
         <option key={o.value} value={o.value}>

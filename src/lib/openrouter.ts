@@ -194,6 +194,8 @@ export interface GenerateRequestOptions {
 }
 
 const JOB_POLL_MS = 2_000
+/** Align with server PROXY_TIMEOUT_MS default — stop infinite client polling. */
+const JOB_POLL_TIMEOUT_MS = 600_000
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -216,8 +218,15 @@ export async function waitForServerJob(
   claimToken: string,
   signal?: AbortSignal,
 ): Promise<{ apiPath: 'chat/completions' | 'images'; data: unknown }> {
+  const deadline = Date.now() + JOB_POLL_TIMEOUT_MS
+
   for (;;) {
     if (signal?.aborted) throw new DOMException('Polling aborted', 'AbortError')
+    if (Date.now() > deadline) {
+      throw new Error(
+        'Timed out while waiting for the server job (10 minutes). Reopen this page to reclaim the result if generation still finished.',
+      )
+    }
 
     try {
       const res = await fetch(`/jobs/${encodeURIComponent(jobId)}`, {

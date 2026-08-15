@@ -598,6 +598,36 @@ export function saveWorkspaceSessionsAsync(data: WorkspaceSessions): Promise<Ses
   return next
 }
 
+const ORPHAN_PENDING_MESSAGE =
+  'Generation was interrupted. Send again to retry, or reopen this page if a server job is still running.'
+
+/**
+ * Clear assistant turns stuck in pending without a reclaimable server job.
+ * Turns with serverJobId + claimToken are left for resume on mount.
+ */
+export function reconcileOrphanPendingTurns(sessions: WorkspaceSessions): WorkspaceSessions {
+  const cleanBucket = (bucket: SessionBucket): SessionBucket => ({
+    ...bucket,
+    conversations: bucket.conversations.map((conversation) => ({
+      ...conversation,
+      turns: conversation.turns.map((turn) => {
+        if (!turn.pending) return turn
+        if (turn.serverJobId && turn.claimToken) return turn
+        return {
+          ...turn,
+          pending: false,
+          error: turn.error ?? ORPHAN_PENDING_MESSAGE,
+        }
+      }),
+    })),
+  })
+
+  return {
+    banana: cleanBucket(sessions.banana),
+    gpt: cleanBucket(sessions.gpt),
+  }
+}
+
 /** Synchronous empty bootstrap for React initial state before async hydrate. */
 export function loadWorkspaceSessions(): WorkspaceSessions {
   return emptyWorkspaceSessions()

@@ -28,6 +28,7 @@ import {
   loadPendingServerJobs,
   upsertPendingServerJob,
   removePendingServerJob,
+  reconcileOrphanPendingTurns,
 } from './lib/storage'
 import {
   generateImage,
@@ -92,6 +93,7 @@ export default function App() {
   )
   const [activeJobs, setActiveJobs] = useState<Partial<Record<Workspace, string>>>({})
   const [storageWarning, setStorageWarning] = useState<string>()
+  const [focusApiKeyInSettings, setFocusApiKeyInSettings] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const sessions = workspaceSessions[workspace]
@@ -118,7 +120,7 @@ export default function App() {
       try {
         const result = await loadWorkspaceSessionsAsync()
         if (cancelled) return
-        setWorkspaceSessions(result.sessions)
+        setWorkspaceSessions(reconcileOrphanPendingTurns(result.sessions))
         if (result.warning) setStorageWarning(result.warning)
       } catch {
         if (cancelled) return
@@ -313,6 +315,17 @@ export default function App() {
   const handleSaveSettings = (next: Settings) => {
     setSettings(next)
     saveSettings(next)
+    setFocusApiKeyInSettings(false)
+    setShowSettings(false)
+  }
+
+  const openSettingsForApiKey = () => {
+    setFocusApiKeyInSettings(true)
+    setShowSettings(true)
+  }
+
+  const closeSettings = () => {
+    setFocusApiKeyInSettings(false)
     setShowSettings(false)
   }
 
@@ -687,8 +700,14 @@ export default function App() {
                 {emptyPrompts.map((p) => (
                   <button
                     key={p}
-                    disabled={!hasKey || busy || !sessionsReady}
-                    onClick={() => send(p, [])}
+                    disabled={busy}
+                    onClick={() => {
+                      if (!hasKey) {
+                        openSettingsForApiKey()
+                        return
+                      }
+                      if (sessionsReady) send(p, [])
+                    }}
                     className="rounded-xl border border-gray-200 p-3 text-left text-sm text-gray-700 transition hover:border-banana-400 hover:bg-banana-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-800 dark:text-gray-300 dark:hover:border-banana-400 dark:hover:bg-gray-900"
                   >
                     {p}
@@ -712,7 +731,9 @@ export default function App() {
 
         <div className="border-t border-gray-100 px-4 py-4 dark:border-gray-800">
           <Composer
-            disabled={!hasKey || busy || !sessionsReady}
+            busy={busy}
+            hasKey={hasKey}
+            sessionsReady={sessionsReady}
             storageWarning={storageWarning}
             workspace={workspace}
             gptMode={gptMode}
@@ -729,6 +750,7 @@ export default function App() {
             onChangeImageQuality={(value: ImageQuality) =>
               updateImagePreference('imageQuality', value)
             }
+            onNeedApiKey={openSettingsForApiKey}
             onSend={send}
           />
         </div>
@@ -737,8 +759,9 @@ export default function App() {
       {showSettings && (
         <SettingsModal
           settings={settings}
+          focusApiKey={focusApiKeyInSettings}
           onSave={handleSaveSettings}
-          onClose={() => setShowSettings(false)}
+          onClose={closeSettings}
         />
       )}
     </div>

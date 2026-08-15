@@ -1,22 +1,30 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Settings } from '../lib/types'
 import { MODEL_OPTIONS, DEFAULT_SETTINGS } from '../lib/storage'
 import { CloseIcon } from './icons'
 
 interface Props {
   settings: Settings
+  focusApiKey?: boolean
   onSave: (settings: Settings) => void
   onClose: () => void
 }
 
-export default function SettingsModal({ settings, onSave, onClose }: Props) {
+export default function SettingsModal({ settings, focusApiKey, onSave, onClose }: Props) {
   const [draft, setDraft] = useState<Settings>(settings)
   const [showKey, setShowKey] = useState(false)
+  const apiKeyRef = useRef<HTMLInputElement>(null)
 
   const update = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setDraft((d) => ({ ...d, [key]: value }))
 
   const modelIsCustom = !MODEL_OPTIONS.some((m) => m.id === draft.model)
+
+  useEffect(() => {
+    if (!focusApiKey) return
+    apiKeyRef.current?.focus()
+    apiKeyRef.current?.select()
+  }, [focusApiKey])
 
   return (
     <div
@@ -42,6 +50,7 @@ export default function SettingsModal({ settings, onSave, onClose }: Props) {
           <Field label="API Key" hint="Shared by Banana and GPT Image. Stored only in your browser.">
             <div className="flex gap-2">
               <input
+                ref={apiKeyRef}
                 type={showKey ? 'text' : 'password'}
                 value={draft.apiKey}
                 onChange={(e) => update('apiKey', e.target.value)}
